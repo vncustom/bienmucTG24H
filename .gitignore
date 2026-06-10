@@ -1,0 +1,30 @@
+# Thư mục input/output chứa dữ liệu nội bộ
+input/
+output/
+
+# Cấu hình API key cá nhân
+config.json
+
+# Log runtime
+*.log
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+.env/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Windows
+Thumbs.db
+Desktop.ini
