@@ -380,6 +380,14 @@ Văn bản:
                     rtf_raw = f.read().decode('utf-8', errors='replace')
                 news_text = rtf_to_text(rtf_raw)
 
+                # Cắt bỏ nội dung từ dòng có 3 ký tự '=' liên tục trở lên đến cuối
+                filtered_lines = []
+                for line in news_text.split('\n'):
+                    if re.search(r'={3,}', line):
+                        break
+                    filtered_lines.append(line)
+                news_text = '\n'.join(filtered_lines)
+
                 prompt_news = f"""
 Trích xuất thông tin từ kịch bản bản tin sau.
 1. tieu_de: Tiêu đề bản tin, thường được viết HOA toàn bộ (ví dụ: THIỆT HẠI DO ĐỘNG ĐẤT Ở PHILIPPINES TIẾP TỤC TĂNG). Nó thường nằm ở dòng thứ 1, 3, hoặc 5 của văn bản. Bỏ qua dòng chữ 'GẠT TG24H' và các tiêu đề tiếng Anh. Bắt buộc phải trích xuất được tiêu đề.
@@ -400,7 +408,13 @@ Văn bản:
                             )
                         )
                         news_parsed = json.loads(res_news.text)
-                        break
+                        # Kiểm tra noi_dung có thực sự có nội dung không
+                        if news_parsed.get("noi_dung") and len(news_parsed["noi_dung"]) > 0:
+                            break  # Thành công thật sự
+                        else:
+                            self.log(f"  ⚠ API trả về noi_dung rỗng cho {os.path.basename(rtf_path)} (lần {attempt+1}/3), thử lại...")
+                            if attempt < 2:
+                                time.sleep(2)
                     except Exception as ex:
                         if attempt == 2:
                             self.log(f"Lỗi khi gọi API bóc tách {os.path.basename(rtf_path)} sau 3 lần thử: {ex}")
@@ -409,6 +423,8 @@ Văn bản:
                             time.sleep(2)
                 
                 tieu_de_ai = news_parsed.get("tieu_de", "").strip()
+                noi_dung_parsed = news_parsed.get("noi_dung", [])
+
                 if not tieu_de_ai:
                     # Fallback: tìm dòng viết hoa đầu tiên dài hơn 10 ký tự, không chứa GẠT TG24H
                     for line in news_text.split('\n'):
@@ -416,11 +432,40 @@ Văn bản:
                         if line.isupper() and len(line) > 10 and "GẠT TG24H" not in line and "HEADLINES" not in line:
                             tieu_de_ai = line
                             break
+
+                # Fallback nội dung: nếu sau 3 lần AI vẫn trả noi_dung rỗng,
+                # tự trích xuất toàn bộ văn bản phía dưới tiêu đề
+                if not noi_dung_parsed:
+                    self.log(f"  ⚠ CẢNH BÁO: AI không trả về nội dung cho '{os.path.basename(rtf_path)}' sau 3 lần thử.")
+                    self.log(f"  → Chuyển sang trích xuất nội dung bằng thuật toán nội bộ (không dùng AI)...")
+                    all_lines = [l.strip() for l in news_text.split('\n')]
+                    # Tìm vị trí tiêu đề trong văn bản
+                    title_idx = -1
+                    if tieu_de_ai:
+                        for li, line in enumerate(all_lines):
+                            if tieu_de_ai in line:
+                                title_idx = li
+                                break
+                    if title_idx == -1:
+                        # Nếu không tìm được tiêu đề, tìm dòng viết hoa đầu tiên dài > 10
+                        for li, line in enumerate(all_lines):
+                            if line.isupper() and len(line) > 10 and "GẠT TG24H" not in line and "HEADLINES" not in line:
+                                title_idx = li
+                                break
+                    # Lấy tất cả đoạn phía dưới tiêu đề
+                    if title_idx >= 0:
+                        content_lines = all_lines[title_idx + 1:]
+                    else:
+                        content_lines = all_lines  # Không tìm được tiêu đề → lấy toàn bộ
+                    # Lọc bỏ dòng trống và dòng quá ngắn (<=2 ký tự)
+                    noi_dung_parsed = [l for l in content_lines if len(l) > 2]
+                    self.log(f"  ✓ Đã trích xuất được {len(noi_dung_parsed)} đoạn nội dung bằng thuật toán nội bộ.")
+
                 chi_tiet_tin.append({
                     "id": id_tin,
                     "tieu_de": tieu_de_ai,
                     "nguoi_bien_dich": news_parsed.get("nguoi_bien_dich", ""),
-                    "noi_dung": news_parsed.get("noi_dung", [])
+                    "noi_dung": noi_dung_parsed
                 })
 
                 self.progress_var.set(20 + (idx + 1) / total_tin * 60) # Cập nhật progress 20 -> 80%
