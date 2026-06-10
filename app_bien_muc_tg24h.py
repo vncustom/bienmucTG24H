@@ -316,6 +316,35 @@ Văn bản:
                 self.log("Không tìm thấy file NHUNG NGUOI THUC HIEN.rtf, bỏ qua ê-kíp.")
                 crew_data = {k: "" for k in ["chiu_trach_nhiem", "bien_tap", "bien_dich", "hien_dan", "dao_dien", "ky_thuat", "trang_diem"]}
 
+            # Fallback: Bổ sung từ các file RTF tiền tố nếu crew_data còn thiếu
+            PREFIX_MAP = {
+                "BGĐ ": "chiu_trach_nhiem",
+                "BT ":  "bien_tap",
+                "BD ":  "bien_dich",
+                "MC ":  "hien_dan",
+                "ĐD ":  "dao_dien",
+                "KT ":  "ky_thuat",
+            }
+            # Kiểm tra xem có trường nào bị rỗng không
+            missing_keys = [k for k in ["chiu_trach_nhiem", "bien_tap", "bien_dich", "hien_dan", "dao_dien", "ky_thuat"] if not crew_data.get(k, "").strip()]
+            if missing_keys:
+                self.log("Một số chức danh còn thiếu tên — đang tìm file RTF tiền tố bổ sung...")
+                # Ánh xạ key -> tiền tố cần tìm
+                KEY_TO_PREFIX = {v: k for k, v in PREFIX_MAP.items()}
+                for fname in os.listdir(input_d):
+                    if not fname.endswith(".rtf"):
+                        continue
+                    for prefix, field_key in PREFIX_MAP.items():
+                        if fname.startswith(prefix) and field_key in missing_keys:
+                            # Lấy phần sau tiền tố, bỏ đuôi .rtf
+                            name_part = fname[len(prefix):][:-4].strip()
+                            # Luôn nối các tên bằng " - " (thay mọi dấu phẩy)
+                            name_part = re.sub(r"\s*,\s*", " - ", name_part)
+                            crew_data[field_key] = name_part.upper()
+                            missing_keys.remove(field_key)
+                            self.log(f"  Bổ sung từ '{fname}': {field_key} = {crew_data[field_key]}")
+                            break  # Không cần quét thêm prefix cho file này
+
             # 4. Parse từng file RTF tin chính
             self.log("Bắt đầu bóc tách nội dung chi tiết từng file kịch bản (RTF)...")
             chi_tiet_tin = [] # Chứa dict: id, a245, a500, a520_list
