@@ -70,6 +70,8 @@ class BienMucApp:
         self.output_dir = tk.StringVar()
         self.api_key = tk.StringVar()
         self.model_name = tk.StringVar(value="gemini-1.5-flash") # Mặc định
+        self.fallback_model_1 = tk.StringVar(value="gemini-1.5-pro") # Mặc định
+        self.fallback_model_2 = tk.StringVar(value="gemini-2.0-flash") # Mặc định
         
         self.load_config()
         self.build_ui()
@@ -81,6 +83,8 @@ class BienMucApp:
                     cfg = json.load(f)
                     self.api_key.set(cfg.get("api_key", ""))
                     self.model_name.set(cfg.get("model_name", "gemini-1.5-flash"))
+                    self.fallback_model_1.set(cfg.get("fallback_model_1", "gemini-1.5-pro"))
+                    self.fallback_model_2.set(cfg.get("fallback_model_2", "gemini-2.0-flash"))
             except Exception as e:
                 logging.error(f"Lỗi đọc config: {e}")
         
@@ -92,7 +96,9 @@ class BienMucApp:
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump({
                     "api_key": self.api_key.get(),
-                    "model_name": self.model_name.get()
+                    "model_name": self.model_name.get(),
+                    "fallback_model_1": self.fallback_model_1.get(),
+                    "fallback_model_2": self.fallback_model_2.get()
                 }, f, indent=4)
         except Exception as e:
             logging.error(f"Lỗi lưu config: {e}")
@@ -149,8 +155,8 @@ class BienMucApp:
 
     def open_settings(self):
         top = tk.Toplevel(self.root)
-        top.title("Cài đặt API")
-        top.geometry("500x200")
+        top.title("Cài đặt API & Models")
+        top.geometry("500x320")
         top.transient(self.root)
         top.grab_set()
 
@@ -158,13 +164,21 @@ class BienMucApp:
         ent_key = ttk.Entry(top, textvariable=self.api_key, show="*")
         ent_key.pack(fill="x", padx=10, pady=5)
 
-        ttk.Label(top, text="Model Name (VD: gemini-1.5-flash, gemini-1.5-pro, gemma-4-26b-a4b-it):").pack(anchor="w", padx=10, pady=(10, 0))
+        ttk.Label(top, text="Model Chính (VD: gemini-1.5-flash):").pack(anchor="w", padx=10, pady=(10, 0))
         ent_model = ttk.Entry(top, textvariable=self.model_name)
         ent_model.pack(fill="x", padx=10, pady=5)
 
+        ttk.Label(top, text="Model Dự phòng 1 (VD: gemini-1.5-pro):").pack(anchor="w", padx=10, pady=(5, 0))
+        ent_fallback_1 = ttk.Entry(top, textvariable=self.fallback_model_1)
+        ent_fallback_1.pack(fill="x", padx=10, pady=5)
+
+        ttk.Label(top, text="Model Dự phòng 2 (VD: gemini-2.0-flash):").pack(anchor="w", padx=10, pady=(5, 0))
+        ent_fallback_2 = ttk.Entry(top, textvariable=self.fallback_model_2)
+        ent_fallback_2.pack(fill="x", padx=10, pady=5)
+
         def save():
             self.save_config()
-            self.log("Đã lưu cấu hình API.")
+            self.log("Đã lưu cấu hình API và Models.")
             top.destroy()
 
         ttk.Button(top, text="Lưu & Đóng", command=save).pack(pady=15)
@@ -288,30 +302,44 @@ class BienMucApp:
                     rtf_raw = f.read().decode('utf-8', errors='replace')
                 ekip_text = rtf_to_text(rtf_raw)
                 
-                model_crew = genai.GenerativeModel(model_name)
+                model_crew_name = model_name
                 prompt_crew = f"""
 Trích xuất thông tin người đảm nhận các chức danh từ văn bản ê-kíp chương trình. Nếu chức danh không có tên người, trả về chuỗi rỗng "". Tên người VIẾT HOA.
 Văn bản:
 {ekip_text}
 """
-                for attempt in range(3):
+                models_to_try = [
+                    self.model_name.get().strip(),
+                    self.fallback_model_1.get().strip(),
+                    self.fallback_model_2.get().strip()
+                ]
+                models_to_try = [m for m in models_to_try if m]
+
+                success_crew = False
+                for m_idx, m_name in enumerate(models_to_try):
+                    self.log(f"  Thử bóc tách ê-kíp bằng model: {m_name}...")
                     try:
+                        model_crew = genai.GenerativeModel(m_name)
                         res_crew = model_crew.generate_content(
                             prompt_crew,
                             generation_config=genai.GenerationConfig(
                                 response_mime_type="application/json",
                                 response_schema=CrewList
-                            )
+                            ),
+                            request_options={"timeout": 240}
                         )
                         crew_data = json.loads(res_crew.text)
+                        success_crew = True
+                        self.log(f"  ✓ Bóc tách ê-kíp thành công bằng model: {m_name}")
                         break
                     except Exception as e:
-                        if attempt == 2:
-                            self.log(f"Lỗi khi bóc tách ê-kíp sau 3 lần thử: {e}")
-                            crew_data = {k: "" for k in ["chiu_trach_nhiem", "bien_tap", "bien_dich", "hien_dan", "dao_dien", "ky_thuat", "trang_diem"]}
-                        else:
-                            self.log(f"Lỗi API (Ê-kíp), đang thử lại... (lần {attempt+1})")
-                            time.sleep(2)
+                        self.log(f"  ⚠ Lỗi khi bóc tách bằng model {m_name}: {e}")
+                        if m_idx < len(models_to_try) - 1:
+                            time.sleep(1)
+                
+                if not success_crew:
+                    self.log("  ⚠ CẢNH BÁO: Tất cả các model đều thất bại khi bóc tách ê-kíp.")
+                    crew_data = {k: "" for k in ["chiu_trach_nhiem", "bien_tap", "bien_dich", "hien_dan", "dao_dien", "ky_thuat", "trang_diem"]}
             else:
                 self.log("Không tìm thấy file NHUNG NGUOI THUC HIEN.rtf, bỏ qua ê-kíp.")
                 crew_data = {k: "" for k in ["chiu_trach_nhiem", "bien_tap", "bien_dich", "hien_dan", "dao_dien", "ky_thuat", "trang_diem"]}
@@ -348,7 +376,6 @@ Văn bản:
             # 4. Parse từng file RTF tin chính
             self.log("Bắt đầu bóc tách nội dung chi tiết từng file kịch bản (RTF)...")
             chi_tiet_tin = [] # Chứa dict: id, a245, a500, a520_list
-            model_rtf = genai.GenerativeModel(model_name)
 
             total_tin = len(danh_sach_tin)
             for idx, tin in enumerate(danh_sach_tin):
@@ -397,30 +424,41 @@ Trích xuất thông tin từ kịch bản bản tin sau.
 Văn bản:
 {news_text}
 """
+                models_to_try = [
+                    self.model_name.get().strip(),
+                    self.fallback_model_1.get().strip(),
+                    self.fallback_model_2.get().strip()
+                ]
+                models_to_try = [m for m in models_to_try if m]
+
                 news_parsed = {}
-                for attempt in range(3):
+                success_news = False
+                for m_idx, m_name in enumerate(models_to_try):
                     try:
+                        self.log(f"  Thử bóc tách bằng model: {m_name}...")
+                        model_rtf = genai.GenerativeModel(m_name)
                         res_news = model_rtf.generate_content(
                             prompt_news,
                             generation_config=genai.GenerationConfig(
                                 response_mime_type="application/json",
                                 response_schema=RtfParseResult
-                            )
+                            ),
+                            request_options={"timeout": 240}
                         )
                         news_parsed = json.loads(res_news.text)
                         # Kiểm tra noi_dung có thực sự có nội dung không
                         if news_parsed.get("noi_dung") and len(news_parsed["noi_dung"]) > 0:
+                            success_news = True
+                            self.log(f"  ✓ Bóc tách thành công bằng model: {m_name}")
                             break  # Thành công thật sự
                         else:
-                            self.log(f"  ⚠ API trả về noi_dung rỗng cho {os.path.basename(rtf_path)} (lần {attempt+1}/3), thử lại...")
-                            if attempt < 2:
-                                time.sleep(2)
+                            self.log(f"  ⚠ Model {m_name} trả về noi_dung rỗng cho {os.path.basename(rtf_path)}.")
+                            if m_idx < len(models_to_try) - 1:
+                                time.sleep(1)
                     except Exception as ex:
-                        if attempt == 2:
-                            self.log(f"Lỗi khi gọi API bóc tách {os.path.basename(rtf_path)} sau 3 lần thử: {ex}")
-                        else:
-                            self.log(f"Lỗi API ({os.path.basename(rtf_path)}), đang thử lại... (lần {attempt+1})")
-                            time.sleep(2)
+                        self.log(f"  ⚠ Lỗi khi bóc tách bằng model {m_name}: {ex}")
+                        if m_idx < len(models_to_try) - 1:
+                            time.sleep(1)
                 
                 tieu_de_ai = news_parsed.get("tieu_de", "").strip()
                 noi_dung_parsed = news_parsed.get("noi_dung", [])
