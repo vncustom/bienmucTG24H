@@ -181,9 +181,9 @@ class BienMucApp:
         frame_note.pack(fill="x", padx=10, pady=5)
         note_text = (
             "• File LIST (Excel): Bắt đầu bằng 'BTTG24H_' (.xlsx). Dữ liệu đọc từ active sheet.\n"
-            "   Cột A: Tên file (bắt đầu bằng '24H-' hoặc 'GAT24H-'), Cột C: ID (9 số), Cột D: ghi chữ 'ONLINE'.\n"
+            "   Cột A: Tên file (bắt đầu bằng '24H-' hoặc 'GAT24H-'), Cột C: ID.\n"
             "• File Ê-kíp: File 'NHUNG NGUOI THUC HIEN.rtf' hoặc file tiền tố 'BGĐ ', 'BT ', 'BD ', 'MC ', 'ĐD ', 'KT '.\n"
-            "• File Kịch bản tin: File .rtf có tên khớp/chứa tên file trong cột A của file LIST."
+            " "
         )
         ttk.Label(frame_note, text=note_text, justify="left", font=("Arial", 9)).pack(anchor="w")
 
