@@ -23,8 +23,36 @@ def apply_tnr_font(ws):
             cell.font = tnr_font
 
 
-# Cấu hình log
+# Cấu hình log và giữ lại 3 ngày gần nhất
 LOG_FILE = "app_bien_muc_tg24h.log"
+
+def prune_log_file(log_path, days=3):
+    if not os.path.exists(log_path):
+        return
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=days)
+    try:
+        valid_lines = []
+        with open(log_path, "r", encoding="utf-8") as f:
+            for line in f:
+                # Mỗi dòng log bắt đầu bằng: YYYY-MM-DD
+                match = re.match(r"^(\d{4}-\d{2}-\d{2})", line)
+                if match:
+                    try:
+                        log_date = datetime.datetime.strptime(match.group(1), "%Y-%m-%d")
+                        if log_date >= cutoff:
+                            valid_lines.append(line)
+                    except ValueError:
+                        valid_lines.append(line)
+                else:
+                    if valid_lines:
+                        valid_lines.append(line)
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.writelines(valid_lines)
+    except Exception as e:
+        print(f"Lỗi khi dọn dẹp log cũ: {e}")
+
+prune_log_file(LOG_FILE, 3)
+
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.INFO,
@@ -104,8 +132,8 @@ class BienMucApp:
             logging.error(f"Lỗi lưu config: {e}")
 
     def build_ui(self):
-        # Frame trên: Chọn folder
-        frame_top = ttk.LabelFrame(self.root, text="Cấu hình Đường dẫn", padding=(10, 10))
+        # Frame trên: Chọn folder & Cấu hình mã bản tin
+        frame_top = ttk.LabelFrame(self.root, text="Cấu hình Đường dẫn & Bản tin", padding=(10, 10))
         frame_top.pack(fill="x", padx=10, pady=5)
 
         ttk.Label(frame_top, text="Thư mục Input:").grid(row=0, column=0, sticky="w", pady=5)
@@ -117,6 +145,28 @@ class BienMucApp:
         ttk.Button(frame_top, text="Chọn...", command=self.browse_output).grid(row=1, column=2, pady=5)
         ttk.Label(frame_top, text="(Mặc định tạo folder 'output' trong input nếu để trống)", font=("Arial", 8, "italic")).grid(row=2, column=1, sticky="w")
 
+        ttk.Label(frame_top, text="Mã bản tin ($a090):").grid(row=3, column=0, sticky="w", pady=5)
+        self.a090_entry = ttk.Entry(frame_top, width=20)
+        self.a090_entry.grid(row=3, column=1, sticky="w", padx=5, pady=5)
+        
+        # Thiết lập chữ gợi ý mờ (Placeholder)
+        def set_placeholder(entry, text):
+            entry.insert(0, text)
+            entry.config(foreground='grey')
+
+        def on_entry_click(event, entry, text):
+            if entry.get() == text:
+                entry.delete(0, tk.END)
+                entry.config(foreground='black')
+
+        def on_focusout(event, entry, text):
+            if entry.get() == '':
+                set_placeholder(entry, text)
+
+        set_placeholder(self.a090_entry, "K303419")
+        self.a090_entry.bind('<FocusIn>', lambda event: on_entry_click(event, self.a090_entry, "K303419"))
+        self.a090_entry.bind('<FocusOut>', lambda event: on_focusout(event, self.a090_entry, "K303419"))
+
         # Frame giữa: Controls
         frame_mid = ttk.Frame(self.root, padding=(10, 5))
         frame_mid.pack(fill="x", padx=10)
@@ -126,10 +176,21 @@ class BienMucApp:
         self.btn_start = ttk.Button(frame_mid, text="▶ BẮT ĐẦU BIÊN MỤC", command=self.start_process, style="Accent.TButton")
         self.btn_start.pack(side="right")
 
+        # Khung lưu ý định dạng đầu vào
+        frame_note = ttk.LabelFrame(self.root, text="Lưu ý định dạng đầu vào để bóc tách đúng", padding=(10, 5))
+        frame_note.pack(fill="x", padx=10, pady=5)
+        note_text = (
+            "• File LIST (Excel): Bắt đầu bằng 'BTTG24H_' (.xlsx). Dữ liệu đọc từ active sheet.\n"
+            "   Cột A: Tên file (bắt đầu bằng '24H-' hoặc 'GAT24H-'), Cột C: ID (9 số), Cột D: ghi chữ 'ONLINE'.\n"
+            "• File Ê-kíp: File 'NHUNG NGUOI THUC HIEN.rtf' hoặc file tiền tố 'BGĐ ', 'BT ', 'BD ', 'MC ', 'ĐD ', 'KT '.\n"
+            "• File Kịch bản tin: File .rtf có tên khớp/chứa tên file trong cột A của file LIST."
+        )
+        ttk.Label(frame_note, text=note_text, justify="left", font=("Arial", 9)).pack(anchor="w")
+
         # Progress
         self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(self.root, variable=self.progress_var, maximum=100)
-        self.progress_bar.pack(fill="x", padx=10, pady=10)
+        self.progress_bar.pack(fill="x", padx=10, pady=5)
 
         # Log Text
         self.txt_log = scrolledtext.ScrolledText(self.root, state="disabled", wrap="word", font=("Consolas", 10))
@@ -208,6 +269,11 @@ class BienMucApp:
             self.log("=== BẮT ĐẦU TIẾN TRÌNH ===")
             genai.configure(api_key=self.api_key.get().strip())
             model_name = self.model_name.get().strip()
+            
+            # Lấy mã bản tin từ giao diện
+            a090_val = self.a090_entry.get().strip()
+            if not a090_val:
+                a090_val = "K303419"
             
             self.log(f"Đang sử dụng model: {model_name}")
             
@@ -593,7 +659,7 @@ Văn bản:
                 
                 val_a911 = "Phạm Thị Đông" if i == 0 else ""
                 
-                ws2.append(["K303419", val_a500, val_a505, val_a911])
+                ws2.append([a090_val, val_a500, val_a505, val_a911])
             
             apply_tnr_font(ws2)
             fn2 = os.path.join(output_d, f"Map_BanTinTG_24G_{ngay_phat}.xlsx")
