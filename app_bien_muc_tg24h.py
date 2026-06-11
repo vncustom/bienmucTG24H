@@ -43,6 +43,31 @@ def get_green_cf_tag(rtf_raw: str) -> str:
     return r'\cf2'
 
 
+def get_color_tags(rtf_raw: str):
+    """Parse colortbl để tìm cf tags cho green, black, và red."""
+    match = re.search(r'\{\\colortbl([^}]+)\}', rtf_raw)
+    green_cf, black_cf, red_cf = None, None, None
+    if not match:
+        return r'\cf2', r'\cf1', None
+    colortbl_content = match.group(1)
+    colors = colortbl_content.split(';')
+    for idx, color_def in enumerate(colors):
+        if idx == 0:
+            continue
+        r_match = re.search(r'\\red(\d+)', color_def)
+        g_match = re.search(r'\\green(\d+)', color_def)
+        b_match = re.search(r'\\blue(\d+)', color_def)
+        if r_match and g_match and b_match:
+            r_val, g_val, b_val = int(r_match.group(1)), int(g_match.group(1)), int(b_match.group(1))
+            if r_val == 0 and g_val == 128 and b_val == 0:
+                green_cf = f'\\cf{idx}'
+            elif r_val == 0 and g_val == 0 and b_val == 0:
+                black_cf = f'\\cf{idx}'
+            elif r_val == 255 and g_val == 0 and b_val == 0:
+                red_cf = f'\\cf{idx}'
+    return green_cf or r'\cf2', black_cf or r'\cf1', red_cf
+
+
 # Cấu hình log và giữ lại 3 ngày gần nhất
 LOG_FILE = "app_bien_muc_tg24h.log"
 
@@ -356,6 +381,115 @@ class BienMucApp:
         thread = threading.Thread(target=self.process_thread)
         thread.daemon = True
         thread.start()
+
+    # ------------------------------------------------------------------
+    # Helper: Bóc tách nội dung RTF bằng thuật toán nội bộ (không AI)
+    # Trả về (title, content_lines)
+    # ------------------------------------------------------------------
+    def _internal_extract_content(self, rtf_raw: str, is_live: bool):
+        """Thuật toán nội bộ bóc tách tiêu đề + nội dung từ RTF.
+        
+        Quy tắc:
+        - Tiêu đề: dòng đầu tiên in đậm + in HOA + màu xanh lá (trừ GẠT)
+        - Nội dung (thường): từ dưới tiêu đề đến chữ màu đen cuối cùng
+        - Nội dung (LIVE): từ dưới tiêu đề đến chữ màu đỏ cuối cùng
+          (bỏ qua chữ xanh lá không in đậm)
+        """
+        green_cf, black_cf, red_cf = get_color_tags(rtf_raw)
+        
+        # Lấy RTF header để wrap paragraph
+        header_match = re.search(r'\\viewkind\d\\uc\d\s*', rtf_raw)
+        rtf_header = rtf_raw[:header_match.end()] if header_match else r"{\rtf1\ansi "
+        
+        def para_to_text(para_raw):
+            try:
+                wrapped = rtf_header + para_raw + r"}"
+                txt = rtf_to_text(wrapped).strip()
+                return re.sub(r'\s+', ' ', txt)
+            except:
+                return ""
+        
+        # Split thành paragraphs
+        paragraphs = re.split(r'\\par(?![a-zA-Z])', rtf_raw)
+        
+        parsed_paras = []
+        for idx, p in enumerate(paragraphs):
+            p_clean = p.strip()
+            if not p_clean:
+                continue
+            if idx == 0:
+                pard_idx = p_clean.find(r'\pard')
+                if pard_idx != -1:
+                    p_clean = p_clean[pard_idx:]
+            
+            has_green = green_cf in p_clean
+            has_black = (black_cf in p_clean) if black_cf else False
+            has_red = (red_cf in p_clean) if red_cf else False
+            # Nếu đoạn không có tag màu nào → thừa kế màu đen từ đoạn trước
+            if not has_green and not has_black and not has_red:
+                has_black = True
+            is_bold = r'\b' in p_clean and (r'\b0' not in p_clean or p_clean.index(r'\b') < p_clean.index(r'\b0'))
+            
+            txt = para_to_text(p_clean)
+            if txt:
+                parsed_paras.append({
+                    'text': txt,
+                    'has_green': has_green,
+                    'has_black': has_black,
+                    'has_red': has_red,
+                    'is_bold': is_bold
+                })
+        
+        # Bước 1: Tìm tiêu đề
+        title = ""
+        title_para_idx = -1
+        for i, p in enumerate(parsed_paras):
+            if p['has_green'] and p['is_bold'] and p['text'].isupper() and len(p['text']) > 3:
+                txt_upper = p['text'].upper()
+                if any(k in txt_upper for k in ["GẠT TG", "GAT TG", "GAT24", "GẠT24", "HEADLINES"]):
+                    continue
+                title = p['text']
+                title_para_idx = i
+                break
+        
+        if title_para_idx == -1:
+            return title, []
+        
+        # Bước 2: Tìm phạm vi nội dung
+        content_paras = parsed_paras[title_para_idx + 1:]
+        
+        # Tìm paragraph cuối cùng của loại màu mục tiêu
+        last_content_idx = -1
+        for i, p in enumerate(content_paras):
+            # Dừng tại dấu phân cách == hoặc ===...
+            if re.search(r'={2,}', p['text']):
+                break
+            if is_live:
+                if p['has_red'] or p['has_black']:
+                    last_content_idx = i
+            else:
+                if p['has_black']:
+                    last_content_idx = i
+        
+        if last_content_idx == -1:
+            return title, []
+        
+        # Trích xuất nội dung
+        content_lines = []
+        for p in content_paras[:last_content_idx + 1]:
+            # Với LIVE: bỏ qua chữ xanh lá không in đậm
+            if is_live and p['has_green'] and not p['is_bold']:
+                continue
+            # Bỏ dòng trùng tiêu đề
+            if p['text'].strip().lower() == title.strip().lower():
+                continue
+            # Dừng tại separator
+            if re.search(r'={2,}', p['text']):
+                break
+            if len(p['text']) > 2:
+                content_lines.append(p['text'])
+        
+        return title, content_lines
 
     # ------------------------------------------------------------------
     # Helper: Gọi AI theo provider đang chọn
@@ -770,11 +904,16 @@ Văn bản:
                     noi_dung_parsed = [l for l in content_lines if len(l) > 2]
                     self.log(f"  ✓ Đã trích xuất được {len(noi_dung_parsed)} đoạn nội dung bằng thuật toán nội bộ.")
 
+                # --- Bóc tách nội bộ (không AI) để so sánh cho Map_ChiTiet ---
+                internal_title, internal_content = self._internal_extract_content(rtf_raw, is_live_feed)
+                
                 chi_tiet_tin.append({
                     "id": id_tin,
                     "tieu_de": tieu_de_ai,
                     "nguoi_bien_dich": news_parsed.get("nguoi_bien_dich", ""),
-                    "noi_dung": noi_dung_parsed
+                    "noi_dung": noi_dung_parsed,
+                    "internal_title": internal_title,
+                    "internal_content": internal_content
                 })
 
                 self.progress_var.set(20 + (idx + 1) / total_tin * 60) # Cập nhật progress 20 -> 80%
@@ -870,13 +1009,16 @@ Văn bản:
             fn2 = os.path.join(output_d, f"Map_BanTinTG_24G_{ngay_phat}.xlsx")
             wb2.save(fn2)
 
-            # 7. Sinh Output 3: Map_ChiTiet
-            self.progress_var.set(95)
-            self.log("Đang tạo file Output 3: Map_ChiTiet...")
+            # 7. Sinh Output 3: Map_ChiTiet (AI)
+            self.progress_var.set(90)
+            self.log("Đang tạo file Output 3: Map_ChiTiet (AI)...")
             wb3 = openpyxl.Workbook()
             ws3 = wb3.active
             ws3.title = "24G"
             ws3.append(["$a090", "$a500", "$a520"])
+
+            # Đếm số dòng mỗi tin trong file AI
+            ai_line_counts = {}
 
             for idx, ct in enumerate(chi_tiet_tin):
                 id_tin = ct["id"]
@@ -894,20 +1036,89 @@ Văn bản:
                     filtered_nd.append(line)
 
                 if not filtered_nd:
-                    # Nếu không còn nội dung sau khi lọc, để trống 1 dòng
                     ws3.append([id_tin, val_a500_first, ""])
+                    ai_line_counts[id_tin] = 1
                 else:
                     for j, line in enumerate(filtered_nd):
                         a500 = val_a500_first if j == 0 else ""
                         ws3.append([id_tin, a500, line])
+                    ai_line_counts[id_tin] = len(filtered_nd)
 
             apply_tnr_font(ws3)
             fn3 = os.path.join(output_d, f"Map_ChiTiet_24G_{ngay_phat}.xlsx")
             wb3.save(fn3)
 
+            # 8. Sinh Output 4: Map_ChiTiet_ThuatToan (hoàn toàn từ thuật toán nội bộ)
+            self.progress_var.set(95)
+            self.log("Đang tạo file Output 4: Map_ChiTiet_ThuatToan (thuật toán nội bộ)...")
+            wb4 = openpyxl.Workbook()
+            ws4 = wb4.active
+            ws4.title = "24G"
+            ws4.append(["$a090", "$a500", "$a520"])
+
+            # Đếm số dòng mỗi tin trong file thuật toán
+            tt_line_counts = {}
+
+            for idx, ct in enumerate(chi_tiet_tin):
+                id_tin = ct["id"]
+                nguoi_bd = ct["nguoi_bien_dich"]
+                int_title = ct.get("internal_title", "")
+                int_content = ct.get("internal_content", [])
+                
+                val_a500_first = f"Biên dịch: {nguoi_bd}" if nguoi_bd else ""
+                
+                # Loại bỏ dòng trùng với tiêu đề nội bộ
+                filtered_int = []
+                clean_int_title = int_title.strip().lower() if int_title else ""
+                for line in int_content:
+                    if clean_int_title and line.strip().lower() == clean_int_title:
+                        continue
+                    filtered_int.append(line)
+
+                if not filtered_int:
+                    ws4.append([id_tin, val_a500_first, ""])
+                    tt_line_counts[id_tin] = 1
+                else:
+                    for j, line in enumerate(filtered_int):
+                        a500 = val_a500_first if j == 0 else ""
+                        ws4.append([id_tin, a500, line])
+                    tt_line_counts[id_tin] = len(filtered_int)
+
+            apply_tnr_font(ws4)
+            fn4 = os.path.join(output_d, f"Map_ChiTiet_ThuatToan_{ngay_phat}.xlsx")
+            wb4.save(fn4)
+            self.log(f"  ✓ Đã tạo file: {os.path.basename(fn4)}")
+
+            # --- So sánh SỐ DÒNG mỗi tin giữa Map_ChiTiet (AI) và Map_ChiTiet_ThuatToan ---
+            discrepancies = []
+            for ct in chi_tiet_tin:
+                id_tin = ct["id"]
+                ai_count = ai_line_counts.get(id_tin, 0)
+                tt_count = tt_line_counts.get(id_tin, 0)
+                if ai_count != tt_count:
+                    discrepancies.append({"id": id_tin, "ai": ai_count, "tt": tt_count})
+            
+            if discrepancies:
+                self.log("")
+                self.log("⚠ CẢNH BÁO: Số dòng không trùng khớp giữa Map_ChiTiet (AI) và Map_ChiTiet_ThuatToan:")
+                warn_lines = []
+                for d in discrepancies:
+                    msg = f"Tin {d['id']}: AI={d['ai']} dòng, ThuậtToán={d['tt']} dòng"
+                    self.log(f"  ▸ {msg}")
+                    warn_lines.append(f"• {msg}")
+                self.log("Vui lòng mở 2 file và kiểm tra lại những tin trên.")
+                self.log("")
+                
+                warn_msg = "Số dòng không trùng khớp giữa Map_ChiTiet (AI) và Map_ChiTiet_ThuatToan:\n\n"
+                warn_msg += "\n".join(warn_lines)
+                warn_msg += "\n\nVui lòng mở 2 file và kiểm tra lại."
+                messagebox.showwarning("Cảnh báo kiểm tra Map_ChiTiet", warn_msg)
+            else:
+                self.log("✓ Số dòng mỗi tin trong Map_ChiTiet (AI) và Map_ChiTiet_ThuatToan trùng khớp.")
+
             self.progress_var.set(100)
             self.log("=== HOÀN TẤT BIÊN MỤC ===")
-            messagebox.showinfo("Thành công", f"Đã sinh 3 file output thành công tại:\n{output_d}")
+            messagebox.showinfo("Thành công", f"Đã sinh 4 file output thành công tại:\n{output_d}")
 
         except Exception as e:
             err_msg = traceback.format_exc()
