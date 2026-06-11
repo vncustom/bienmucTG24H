@@ -1,0 +1,5 @@
+openpyxl
+striprtf
+google-generativeai
+typing_extensions
+openai

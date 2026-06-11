@@ -22,6 +22,10 @@ def apply_tnr_font(ws):
     for row in ws.iter_rows():
         for cell in row:
             cell.font = tnr_font
+    
+    # Tăng chiều rộng cột B và C lên gấp 3 lần độ rộng mặc định (~8.43 * 3 ≈ 25.3, ta đặt 30 để thoải mái hơn)
+    ws.column_dimensions['B'].width = 30
+    ws.column_dimensions['C'].width = 30
 
 
 # Cấu hình log và giữ lại 3 ngày gần nhất
