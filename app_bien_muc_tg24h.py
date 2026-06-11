@@ -28,6 +28,21 @@ def apply_tnr_font(ws):
     ws.column_dimensions['C'].width = 30
 
 
+def get_green_cf_tag(rtf_raw: str) -> str:
+    r"""Tìm thẻ colortbl định nghĩa bảng màu trong file RTF và trả về thẻ \cf tương ứng với màu xanh lá cây."""
+    match = re.search(r'\{\\colortbl([^}]+)\}', rtf_raw)
+    if not match:
+        return r'\cf2'
+    colortbl_content = match.group(1)
+    colors = colortbl_content.split(';')
+    for idx, color_def in enumerate(colors):
+        if idx == 0:
+            continue
+        if r'\green128' in color_def:
+            return f'\\cf{idx}'
+    return r'\cf2'
+
+
 # Cấu hình log và giữ lại 3 ngày gần nhất
 LOG_FILE = "app_bien_muc_tg24h.log"
 
@@ -597,29 +612,79 @@ Văn bản:
                 self.log(f"Đang bóc tách: {os.path.basename(rtf_path)}...")
                 with open(rtf_path, 'rb') as f:
                     rtf_raw = f.read().decode('utf-8', errors='replace')
-                news_text = rtf_to_text(rtf_raw)
 
-                # Bóc tách tiêu đề theo định dạng: dòng đầu tiên in đậm (\b), in HOA, màu xanh lá cây (\cf2)
+                # Định nghĩa header và tìm mã màu xanh lá cây
+                rtf_header = r"{\rtf1\ansi "
+                header_match = re.search(r'\\viewkind\d\\uc\d\s*', rtf_raw)
+                if header_match:
+                    rtf_header = rtf_raw[:header_match.end()]
+
+                green_tag = get_green_cf_tag(rtf_raw)
+                is_live_feed = "live" in ten_tin.lower()
+
+                # Bóc tách tiêu đề theo định dạng: dòng đầu tiên in đậm (\b), in HOA, màu xanh lá cây
                 tieu_de_tu_dinh_dang = ""
                 try:
-                    paragraphs = rtf_raw.split(r'\par')
-                    for p in paragraphs:
+                    paragraphs = re.split(r'\\par(?![a-zA-Z])', rtf_raw)
+                    for idx, p in enumerate(paragraphs):
                         p_clean = p.strip()
                         if not p_clean:
                             continue
-                        is_green = r'\cf2' in p_clean
+                        if idx == 0:
+                            # Tránh duplicate header làm hỏng parsing dòng đầu tiên
+                            pard_idx = p_clean.find(r'\pard')
+                            if pard_idx != -1:
+                                p_clean = p_clean[pard_idx:]
+
+                        is_green = green_tag in p_clean
                         is_bold = r'\b' in p_clean and (r'\b0' not in p_clean or p_clean.index(r'\b') < p_clean.index(r'\b0'))
                         if is_green and is_bold:
-                            rtf_wrapped = r"{\rtf1\ansi " + p_clean + r"}"
+                            rtf_wrapped = rtf_header + p_clean + r"}"
                             txt = rtf_to_text(rtf_wrapped).strip()
                             txt = re.sub(r'\s+', ' ', txt)
                             if txt and txt.isupper() and len(txt) > 3:
+                                # Bỏ qua dòng phân cách phân loại như "GẠT TG24H", "HEADLINES"...
+                                txt_upper = txt.upper()
+                                if any(k in txt_upper for k in ["GẠT TG", "GAT TG", "GAT24", "GẠT24", "HEADLINES"]):
+                                    continue
                                 tieu_de_tu_dinh_dang = txt
                                 break
                     if tieu_de_tu_dinh_dang:
                         self.log(f"  ✓ Tìm thấy tiêu đề định dạng: '{tieu_de_tu_dinh_dang}'")
                 except Exception as e:
                     self.log(f"  ⚠ Lỗi khi trích xuất tiêu đề theo định dạng: {e}")
+
+                # Bóc tách văn bản thô (có lọc tin LIVE nếu cần)
+                if is_live_feed:
+                    try:
+                        paragraphs = re.split(r'\\par(?![a-zA-Z])', rtf_raw)
+                        filtered_paragraphs = []
+                        for idx, p in enumerate(paragraphs):
+                            p_clean = p.strip()
+                            if not p_clean:
+                                continue
+                            if idx == 0:
+                                pard_idx = p_clean.find(r'\pard')
+                                if pard_idx != -1:
+                                    p_clean = p_clean[pard_idx:]
+
+                            has_green = green_tag in p_clean
+                            is_bold = r'\b' in p_clean and (r'\b0' not in p_clean or p_clean.index(r'\b') < p_clean.index(r'\b0'))
+
+                            if has_green and not is_bold:
+                                continue
+
+                            rtf_wrapped = rtf_header + p_clean + r"}"
+                            txt = rtf_to_text(rtf_wrapped).strip()
+                            txt = re.sub(r'\s+', ' ', txt)
+                            if txt:
+                                filtered_paragraphs.append(txt)
+                        news_text = '\n'.join(filtered_paragraphs)
+                    except Exception as e:
+                        self.log(f"  ⚠ Lỗi khi lọc tin LIVE: {e}. Fallback sang text thô.")
+                        news_text = rtf_to_text(rtf_raw)
+                else:
+                    news_text = rtf_to_text(rtf_raw)
 
                 # Cắt bỏ nội dung từ dòng có 3 ký tự '=' liên tục trở lên đến cuối
                 filtered_lines = []
@@ -820,11 +885,19 @@ Văn bản:
                 
                 val_a500_first = f"Biên dịch: {nguoi_bd}" if nguoi_bd else ""
                 
-                if not nd_list:
-                    # Nếu lỗi không bóc được nội dung, để trống 1 dòng
+                # Loại bỏ dòng trùng với tiêu đề chính (tieu_de)
+                filtered_nd = []
+                clean_title = ct["tieu_de"].strip().lower() if ct.get("tieu_de") else ""
+                for line in nd_list:
+                    if clean_title and line.strip().lower() == clean_title:
+                        continue
+                    filtered_nd.append(line)
+
+                if not filtered_nd:
+                    # Nếu không còn nội dung sau khi lọc, để trống 1 dòng
                     ws3.append([id_tin, val_a500_first, ""])
                 else:
-                    for j, line in enumerate(nd_list):
+                    for j, line in enumerate(filtered_nd):
                         a500 = val_a500_first if j == 0 else ""
                         ws3.append([id_tin, a500, line])
 
