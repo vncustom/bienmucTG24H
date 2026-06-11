@@ -383,14 +383,74 @@ class BienMucApp:
         thread.start()
 
     # ------------------------------------------------------------------
+    # Helper: Bóc tách thông tin ê-kíp sản xuất bằng thuật toán nội bộ (không AI)
+    # ------------------------------------------------------------------
+    def _internal_extract_crew(self, ekip_text: str) -> dict:
+        crew = {
+            "chiu_trach_nhiem": "",
+            "bien_tap": "",
+            "bien_dich": "",
+            "hien_dan": "",
+            "dao_dien": "",
+            "ky_thuat": "",
+            "trang_diem": ""
+        }
+        patterns = {
+            "chiu_trach_nhiem": [
+                r"CHỊU\s+TRÁCH\s+NHIỆM\s+NỘI\s+DUNG\s*:\s*(.*)",
+                r"CHIU\s+TRACH\s+NHIEM\s+NOI\s+DUNG\s*:\s*(.*)"
+            ],
+            "bien_tap": [
+                r"BIÊN\s+TẬP\s*:\s*(.*)",
+                r"BIEN\s+TAP\s*:\s*(.*)"
+            ],
+            "bien_dich": [
+                r"BIÊN\s+DỊCH\s*:\s*(.*)",
+                r"BIEN\s+DICH\s*:\s*(.*)"
+            ],
+            "hien_dan": [
+                r"HIỆN\s+DẪN\s*:\s*(.*)",
+                r"HIEN\s+DAN\s*:\s*(.*)"
+            ],
+            "dao_dien": [
+                r"ĐẠO\s+DIỄN\s*:\s*(.*)",
+                r"DAO\s+DIEN\s*:\s*(.*)"
+            ],
+            "ky_thuat": [
+                r"KỸ\s+THUẬT\s*:\s*(.*)",
+                r"KY\s+THUAT\s*:\s*(.*)"
+            ],
+            "trang_diem": [
+                r"TRANG\s+ĐI[ỂÊêể\s\u0309]+M\s*:\s*(.*)",
+                r"TRANG\s+DI[EÊeê\s]+M\s*:\s*(.*)"
+            ]
+        }
+        for line in ekip_text.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            for key, regexes in patterns.items():
+                matched = False
+                for regex in regexes:
+                    match = re.match(regex, line, re.IGNORECASE)
+                    if match:
+                        crew[key] = match.group(1).strip()
+                        matched = True
+                        break
+                if matched:
+                    break
+        return crew
+
+    # ------------------------------------------------------------------
     # Helper: Bóc tách nội dung RTF bằng thuật toán nội bộ (không AI)
-    # Trả về (title, content_lines)
+    # Trả về (title, translator, content_lines)
     # ------------------------------------------------------------------
     def _internal_extract_content(self, rtf_raw: str, is_live: bool):
-        """Thuật toán nội bộ bóc tách tiêu đề + nội dung từ RTF.
+        """Thuật toán nội bộ bóc tách tiêu đề + người biên dịch + nội dung từ RTF.
         
         Quy tắc:
         - Tiêu đề: dòng đầu tiên in đậm + in HOA + màu xanh lá (trừ GẠT)
+        - Người biên dịch: dòng chữ không có số/kí tự đặc biệt ngay trước tiêu đề
         - Nội dung (thường): từ dưới tiêu đề đến chữ màu đen cuối cùng
         - Nội dung (LIVE): từ dưới tiêu đề đến chữ màu đỏ cuối cùng
           (bỏ qua chữ xanh lá không in đậm)
@@ -453,7 +513,39 @@ class BienMucApp:
                 break
         
         if title_para_idx == -1:
-            return title, []
+            # Fallback: tìm dòng viết hoa đầu tiên dài > 10
+            for i, p in enumerate(parsed_paras):
+                txt_upper = p['text'].upper()
+                if p['text'].isupper() and len(p['text']) > 10:
+                    if any(k in txt_upper for k in ["GẠT TG", "GAT TG", "GAT24", "GẠT24", "HEADLINES"]):
+                        continue
+                    title = p['text']
+                    title_para_idx = i
+                    break
+        
+        if title_para_idx == -1:
+            return title, "", []
+        
+        # Bước 1b: Tìm người biên dịch
+        translator = ""
+        plain_text = rtf_to_text(rtf_raw)
+        lines = [line.strip('\r\n') for line in plain_text.split('\n')]
+        line_idx = -1
+        for li, line in enumerate(lines):
+            if title.strip() in line:
+                line_idx = li
+                break
+        
+        if line_idx > 0:
+            for offset in range(1, 8):
+                if line_idx - offset >= 0:
+                    candidate = lines[line_idx - offset]
+                    cc = candidate.strip()
+                    if cc:
+                        if not re.search(r'\d', cc) and not any(k in cc.lower() for k in ["hình", "ngày", "reuters", "cnn", "ap", "afp", "ttx", "interplay", "search", "http", "www"]):
+                            if 2 <= len(cc) <= 30:
+                                translator = candidate
+                                break
         
         # Bước 2: Tìm phạm vi nội dung
         content_paras = parsed_paras[title_para_idx + 1:]
@@ -472,7 +564,7 @@ class BienMucApp:
                     last_content_idx = i
         
         if last_content_idx == -1:
-            return title, []
+            return title, translator, []
         
         # Trích xuất nội dung
         content_lines = []
@@ -489,7 +581,7 @@ class BienMucApp:
             if len(p['text']) > 2:
                 content_lines.append(p['text'])
         
-        return title, content_lines
+        return title, translator, content_lines
 
     # ------------------------------------------------------------------
     # Helper: Gọi AI theo provider đang chọn
@@ -570,6 +662,18 @@ class BienMucApp:
                 output_d = os.path.join(input_d, "output")
             os.makedirs(output_d, exist_ok=True)
             self.log(f"Thư mục Output: {output_d}")
+
+            # Khởi tạo và dọn dẹp thư mục tempbienmuc cùng cấp với input
+            temp_d = os.path.join(os.path.dirname(input_d), "tempbienmuc")
+            os.makedirs(temp_d, exist_ok=True)
+            self.log(f"Đang dọn dẹp thư mục tạm: {temp_d}...")
+            for f_name in os.listdir(temp_d):
+                f_path = os.path.join(temp_d, f_name)
+                if os.path.isfile(f_path):
+                    try:
+                        os.remove(f_path)
+                    except Exception as ex:
+                        self.log(f"  ⚠ Không thể xóa file tạm {f_name}: {ex}")
 
             # 1. Tìm file LIST
             list_files = [f for f in os.listdir(input_d) if f.startswith("BTTG24H_") and f.endswith(".xlsx")]
@@ -698,21 +802,43 @@ Văn bản:
             missing_keys = [k for k in ["chiu_trach_nhiem", "bien_tap", "bien_dich", "hien_dan", "dao_dien", "ky_thuat"] if not crew_data.get(k, "").strip()]
             if missing_keys:
                 self.log("Một số chức danh còn thiếu tên — đang tìm file RTF tiền tố bổ sung...")
-                # Ánh xạ key -> tiền tố cần tìm
-                KEY_TO_PREFIX = {v: k for k, v in PREFIX_MAP.items()}
                 for fname in os.listdir(input_d):
                     if not fname.endswith(".rtf"):
                         continue
                     for prefix, field_key in PREFIX_MAP.items():
                         if fname.startswith(prefix) and field_key in missing_keys:
-                            # Lấy phần sau tiền tố, bỏ đuôi .rtf
                             name_part = fname[len(prefix):][:-4].strip()
-                            # Luôn nối các tên bằng " - " (thay mọi dấu phẩy)
                             name_part = re.sub(r"\s*,\s*", " - ", name_part)
                             crew_data[field_key] = name_part.upper()
                             missing_keys.remove(field_key)
                             self.log(f"  Bổ sung từ '{fname}': {field_key} = {crew_data[field_key]}")
-                            break  # Không cần quét thêm prefix cho file này
+                            break
+
+            # Bóc tách ê-kíp sản xuất bằng thuật toán nội bộ (không AI)
+            crew_data_internal = {k: "" for k in ["chiu_trach_nhiem", "bien_tap", "bien_dich", "hien_dan", "dao_dien", "ky_thuat", "trang_diem"]}
+            if os.path.exists(ekip_file):
+                self.log("Bóc tách thông tin ê-kíp sản xuất bằng thuật toán nội bộ...")
+                try:
+                    crew_data_internal = self._internal_extract_crew(ekip_text)
+                    self.log("  ✓ Bóc tách ê-kíp bằng thuật toán nội bộ thành công.")
+                except Exception as e:
+                    self.log(f"  ⚠ Lỗi khi bóc tách ê-kíp bằng thuật toán nội bộ: {e}")
+
+            # Fallback cho ê-kíp nội bộ
+            missing_keys_internal = [k for k in ["chiu_trach_nhiem", "bien_tap", "bien_dich", "hien_dan", "dao_dien", "ky_thuat"] if not crew_data_internal.get(k, "").strip()]
+            if missing_keys_internal:
+                self.log("Một số chức danh nội bộ còn thiếu tên — đang tìm file RTF tiền tố bổ sung...")
+                for fname in os.listdir(input_d):
+                    if not fname.endswith(".rtf"):
+                        continue
+                    for prefix, field_key in PREFIX_MAP.items():
+                        if fname.startswith(prefix) and field_key in missing_keys_internal:
+                            name_part = fname[len(prefix):][:-4].strip()
+                            name_part = re.sub(r"\s*,\s*", " - ", name_part)
+                            crew_data_internal[field_key] = name_part.upper()
+                            missing_keys_internal.remove(field_key)
+                            self.log(f"  Bổ sung (nội bộ) từ '{fname}': {field_key} = {crew_data_internal[field_key]}")
+                            break
 
             # 4. Parse từng file RTF tin chính
             self.log("Bắt đầu bóc tách nội dung chi tiết từng file kịch bản (RTF)...")
@@ -905,7 +1031,7 @@ Văn bản:
                     self.log(f"  ✓ Đã trích xuất được {len(noi_dung_parsed)} đoạn nội dung bằng thuật toán nội bộ.")
 
                 # --- Bóc tách nội bộ (không AI) để so sánh cho Map_ChiTiet ---
-                internal_title, internal_content = self._internal_extract_content(rtf_raw, is_live_feed)
+                internal_title, internal_translator, internal_content = self._internal_extract_content(rtf_raw, is_live_feed)
                 
                 chi_tiet_tin.append({
                     "id": id_tin,
@@ -913,6 +1039,7 @@ Văn bản:
                     "nguoi_bien_dich": news_parsed.get("nguoi_bien_dich", ""),
                     "noi_dung": noi_dung_parsed,
                     "internal_title": internal_title,
+                    "internal_translator": internal_translator,
                     "internal_content": internal_content
                 })
 
@@ -962,6 +1089,46 @@ Văn bản:
             fn1 = os.path.join(output_d, f"Import_SoLuoc_TG24H_{ngay_phat}.xlsx")
             wb1.save(fn1)
 
+            # 5b. Sinh Output 1 Thuật Toán: Import_SoLuoc_TG24H_thuattoan (lưu vào tempbienmuc)
+            self.log("Đang tạo file Import_SoLuoc_TG24H_thuattoan...")
+            wb1_tt = openpyxl.Workbook()
+            ws1_tt = wb1_tt.active
+            ws1_tt.title = "Sheet1"
+            ws1_tt.append(headers1)
+            
+            for idx, tin in enumerate(danh_sach_tin):
+                # Match internal title
+                tieu_de_tt = ""
+                for ct in chi_tiet_tin:
+                    if ct["id"] == tin["id"]:
+                        tieu_de_tt = ct.get("internal_title", "")
+                        break
+                
+                row_data_tt = [
+                    f"{(idx+1):02d}", # STT
+                    tin["id"],        # $a090
+                    tieu_de_tt,       # $a245
+                    "", "",           # $n245, $p245
+                    f"Tin thế giới - bản tin 24g ngày {ngay}/{thang}/{nam}", # $b245
+                    "",               # $a246
+                    "Tp.HCM",         # $a260
+                    "Trung tâm tin tức HTV", # $b260
+                    nam,              # $c260
+                    "File MXF",       # $a300
+                    "",               # $c300
+                    tin["thoi_luong"],# $a306
+                    "",               # $a490
+                    f"Tên file: {tin['id']}  {tin['ten_file']}", # $a500
+                    "", "", "",       # $t773, $r773 x2
+                    "Trung tâm Phát hình - Tư liệu HTV" # $a911
+                ]
+                ws1_tt.append(row_data_tt)
+            
+            apply_tnr_font(ws1_tt)
+            fn1_tt = os.path.join(temp_d, f"Import_SoLuoc_TG24H_thuattoan_{ngay_phat}.xlsx")
+            wb1_tt.save(fn1_tt)
+            self.log(f"  ✓ Đã tạo file: {os.path.basename(fn1_tt)}")
+
             # 6. Sinh Output 2: Map_BanTinTG
             self.progress_var.set(85)
             self.log("Đang tạo file Output 2: Map_BanTinTG...")
@@ -1008,6 +1175,51 @@ Văn bản:
             apply_tnr_font(ws2)
             fn2 = os.path.join(output_d, f"Map_BanTinTG_24G_{ngay_phat}.xlsx")
             wb2.save(fn2)
+
+            # 6b. Sinh Output 2 Thuật Toán: Map_BanTinTG_24G_thuattoan (lưu vào tempbienmuc)
+            self.log("Đang tạo file Map_BanTinTG_24G_thuattoan...")
+            wb2_tt = openpyxl.Workbook()
+            ws2_tt = wb2_tt.active
+            ws2_tt.title = "Sheet1"
+            ws2_tt.append(headers2)
+
+            # Build a500 column array using crew_data_internal
+            a500_crew_tt = [
+                f"CHỊU TRÁCH NHIỆM NỘI DUNG: {crew_data_internal.get('chiu_trach_nhiem', '')}",
+                f"BIÊN TẬP: {crew_data_internal.get('bien_tap', '')}",
+                f"BIÊN DỊCH: {crew_data_internal.get('bien_dich', '')}",
+                f"HIỆN DẪN: {crew_data_internal.get('hien_dan', '')}",
+                f"ĐẠO DIỄN: {crew_data_internal.get('dao_dien', '')}",
+                f"KỸ THUẬT: {crew_data_internal.get('ky_thuat', '')}",
+                f"TRANG ĐIỂM: {crew_data_internal.get('trang_diem', '')}",
+                "Website: www.htv.com.vn/tin-tuc",
+                "Fanpage: www.fb.com/htvtintuc",
+                "Kênh Youtube: www.youtube.com/c/htvtintuc"
+            ]
+
+            max_rows_tt = max(len(a500_crew_tt), len(danh_sach_tin))
+            
+            for i in range(max_rows_tt):
+                val_a500_tt = a500_crew_tt[i] if i < len(a500_crew_tt) else ""
+                
+                val_a505_tt = ""
+                if i < len(danh_sach_tin):
+                    tin = danh_sach_tin[i]
+                    tieu_de_tt = ""
+                    for ct in chi_tiet_tin:
+                        if ct["id"] == tin["id"]:
+                            tieu_de_tt = ct.get("internal_title", "")
+                            break
+                    val_a505_tt = f"{(i+1):02d} - {tieu_de_tt}. Thời lượng: {tin['thoi_luong']}. ID: {tin['id']}"
+                
+                val_a911_tt = "Phạm Thị Đông" if i == 0 else ""
+                
+                ws2_tt.append([a090_val, val_a500_tt, val_a505_tt, val_a911_tt])
+            
+            apply_tnr_font(ws2_tt)
+            fn2_tt = os.path.join(temp_d, f"Map_BanTinTG_24G_thuattoan_{ngay_phat}.xlsx")
+            wb2_tt.save(fn2_tt)
+            self.log(f"  ✓ Đã tạo file: {os.path.basename(fn2_tt)}")
 
             # 7. Sinh Output 3: Map_ChiTiet (AI)
             self.progress_var.set(90)
@@ -1061,7 +1273,7 @@ Văn bản:
 
             for idx, ct in enumerate(chi_tiet_tin):
                 id_tin = ct["id"]
-                nguoi_bd = ct["nguoi_bien_dich"]
+                nguoi_bd = ct.get("internal_translator", "")
                 int_title = ct.get("internal_title", "")
                 int_content = ct.get("internal_content", [])
                 
@@ -1085,7 +1297,7 @@ Văn bản:
                     tt_line_counts[id_tin] = len(filtered_int)
 
             apply_tnr_font(ws4)
-            fn4 = os.path.join(output_d, f"Map_ChiTiet_ThuatToan_{ngay_phat}.xlsx")
+            fn4 = os.path.join(temp_d, f"Map_ChiTiet_ThuatToan_{ngay_phat}.xlsx")
             wb4.save(fn4)
             self.log(f"  ✓ Đã tạo file: {os.path.basename(fn4)}")
 
@@ -1118,7 +1330,7 @@ Văn bản:
 
             self.progress_var.set(100)
             self.log("=== HOÀN TẤT BIÊN MỤC ===")
-            messagebox.showinfo("Thành công", f"Đã sinh 4 file output thành công tại:\n{output_d}")
+            messagebox.showinfo("Thành công", f"Đã sinh các file output thành công:\n- AI Output (Thư mục Output): {output_d}\n- Thuật toán (tempbienmuc): {temp_d}")
 
         except Exception as e:
             err_msg = traceback.format_exc()
