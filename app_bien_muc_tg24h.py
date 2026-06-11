@@ -15,6 +15,7 @@ from openpyxl.styles import Font, Alignment
 from striprtf.striprtf import rtf_to_text
 import google.generativeai as genai
 import typing_extensions as typing
+from openai import OpenAI
 
 def apply_tnr_font(ws):
     tnr_font = Font(name='Times New Roman', size=11)
@@ -100,6 +101,13 @@ class BienMucApp:
         self.model_name = tk.StringVar(value="gemini-1.5-flash") # Mặc định
         self.fallback_model_1 = tk.StringVar(value="gemini-1.5-pro") # Mặc định
         self.fallback_model_2 = tk.StringVar(value="gemini-2.0-flash") # Mặc định
+
+        # --- Provider 2: Mistral ---
+        self.provider = tk.StringVar(value="gemini")  # "gemini" hoặc "mistral"
+        self.mistral_api_key = tk.StringVar()
+        self.mistral_model_name = tk.StringVar(value="mistral-medium-latest")
+        self.mistral_fallback_1 = tk.StringVar(value="mistral-small-latest")
+        self.mistral_fallback_2 = tk.StringVar(value="mistral-small-2409")
         
         self.load_config()
         self.build_ui()
@@ -113,11 +121,18 @@ class BienMucApp:
                     self.model_name.set(cfg.get("model_name", "gemini-1.5-flash"))
                     self.fallback_model_1.set(cfg.get("fallback_model_1", "gemini-1.5-pro"))
                     self.fallback_model_2.set(cfg.get("fallback_model_2", "gemini-2.0-flash"))
+                    self.provider.set(cfg.get("provider", "gemini"))
+                    self.mistral_api_key.set(cfg.get("mistral_api_key", ""))
+                    self.mistral_model_name.set(cfg.get("mistral_model_name", "mistral-medium-latest"))
+                    self.mistral_fallback_1.set(cfg.get("mistral_fallback_1", "mistral-small-latest"))
+                    self.mistral_fallback_2.set(cfg.get("mistral_fallback_2", "mistral-small-2409"))
             except Exception as e:
                 logging.error(f"Lỗi đọc config: {e}")
         
         if not self.api_key.get() and "GEMINI_API_KEY" in os.environ:
             self.api_key.set(os.environ["GEMINI_API_KEY"])
+        if not self.mistral_api_key.get() and "MISTRAL_API_KEY" in os.environ:
+            self.mistral_api_key.set(os.environ["MISTRAL_API_KEY"])
 
     def save_config(self):
         try:
@@ -126,7 +141,12 @@ class BienMucApp:
                     "api_key": self.api_key.get(),
                     "model_name": self.model_name.get(),
                     "fallback_model_1": self.fallback_model_1.get(),
-                    "fallback_model_2": self.fallback_model_2.get()
+                    "fallback_model_2": self.fallback_model_2.get(),
+                    "provider": self.provider.get(),
+                    "mistral_api_key": self.mistral_api_key.get(),
+                    "mistral_model_name": self.mistral_model_name.get(),
+                    "mistral_fallback_1": self.mistral_fallback_1.get(),
+                    "mistral_fallback_2": self.mistral_fallback_2.get()
                 }, f, indent=4)
         except Exception as e:
             logging.error(f"Lỗi lưu config: {e}")
@@ -217,41 +237,95 @@ class BienMucApp:
     def open_settings(self):
         top = tk.Toplevel(self.root)
         top.title("Cài đặt API & Models")
-        top.geometry("500x320")
+        top.geometry("540x580")
+        top.resizable(False, False)
         top.transient(self.root)
         top.grab_set()
 
-        ttk.Label(top, text="Gemini API Key:").pack(anchor="w", padx=10, pady=(10, 0))
-        ent_key = ttk.Entry(top, textvariable=self.api_key, show="*")
-        ent_key.pack(fill="x", padx=10, pady=5)
+        # --- Chọn Provider ---
+        frm_provider = ttk.LabelFrame(top, text="Provider AI", padding=(10, 6))
+        frm_provider.pack(fill="x", padx=10, pady=(10, 5))
+        ttk.Radiobutton(frm_provider, text="Provider 1 – Gemini (mặc định)",
+                        variable=self.provider, value="gemini",
+                        command=lambda: self._toggle_provider_frames(frm_gemini, frm_mistral)).pack(anchor="w")
+        ttk.Radiobutton(frm_provider, text="Provider 2 – Mistral",
+                        variable=self.provider, value="mistral",
+                        command=lambda: self._toggle_provider_frames(frm_gemini, frm_mistral)).pack(anchor="w")
 
-        ttk.Label(top, text="Model Chính (VD: gemini-1.5-flash):").pack(anchor="w", padx=10, pady=(10, 0))
-        ent_model = ttk.Entry(top, textvariable=self.model_name)
-        ent_model.pack(fill="x", padx=10, pady=5)
+        # --- Frame Gemini ---
+        frm_gemini = ttk.LabelFrame(top, text="Cấu hình Gemini", padding=(10, 6))
+        frm_gemini.pack(fill="x", padx=10, pady=5)
 
-        ttk.Label(top, text="Model Dự phòng 1 (VD: gemini-1.5-pro):").pack(anchor="w", padx=10, pady=(5, 0))
-        ent_fallback_1 = ttk.Entry(top, textvariable=self.fallback_model_1)
-        ent_fallback_1.pack(fill="x", padx=10, pady=5)
+        ttk.Label(frm_gemini, text="Gemini API Key:").pack(anchor="w")
+        ent_key = ttk.Entry(frm_gemini, textvariable=self.api_key, show="*")
+        ent_key.pack(fill="x", pady=(0, 5))
 
-        ttk.Label(top, text="Model Dự phòng 2 (VD: gemini-2.0-flash):").pack(anchor="w", padx=10, pady=(5, 0))
-        ent_fallback_2 = ttk.Entry(top, textvariable=self.fallback_model_2)
-        ent_fallback_2.pack(fill="x", padx=10, pady=5)
+        ttk.Label(frm_gemini, text="Model Chính (VD: gemini-1.5-flash):").pack(anchor="w")
+        ttk.Entry(frm_gemini, textvariable=self.model_name).pack(fill="x", pady=(0, 5))
+
+        ttk.Label(frm_gemini, text="Model Dự phòng 1 (VD: gemini-1.5-pro):").pack(anchor="w")
+        ttk.Entry(frm_gemini, textvariable=self.fallback_model_1).pack(fill="x", pady=(0, 5))
+
+        ttk.Label(frm_gemini, text="Model Dự phòng 2 (VD: gemini-2.0-flash):").pack(anchor="w")
+        ttk.Entry(frm_gemini, textvariable=self.fallback_model_2).pack(fill="x")
+
+        # --- Frame Mistral ---
+        frm_mistral = ttk.LabelFrame(top, text="Cấu hình Mistral", padding=(10, 6))
+        frm_mistral.pack(fill="x", padx=10, pady=5)
+
+        ttk.Label(frm_mistral, text="Mistral API Key (hoặc đặt biến MISTRAL_API_KEY):").pack(anchor="w")
+        ttk.Entry(frm_mistral, textvariable=self.mistral_api_key, show="*").pack(fill="x", pady=(0, 5))
+
+        ttk.Label(frm_mistral, text="Model Chính (VD: mistral-medium-latest):").pack(anchor="w")
+        ttk.Entry(frm_mistral, textvariable=self.mistral_model_name).pack(fill="x", pady=(0, 5))
+
+        ttk.Label(frm_mistral, text="Model Dự phòng 1 (VD: mistral-small-latest):").pack(anchor="w")
+        ttk.Entry(frm_mistral, textvariable=self.mistral_fallback_1).pack(fill="x", pady=(0, 5))
+
+        ttk.Label(frm_mistral, text="Model Dự phòng 2 (VD: mistral-small-2409):").pack(anchor="w")
+        ttk.Entry(frm_mistral, textvariable=self.mistral_fallback_2).pack(fill="x")
+
+        # Áp dụng trạng thái ẩn/hiện ban đầu
+        self._toggle_provider_frames(frm_gemini, frm_mistral)
 
         def save():
             self.save_config()
-            self.log("Đã lưu cấu hình API và Models.")
+            self.log(f"Đã lưu cấu hình – Provider: {self.provider.get().upper()}.")
             top.destroy()
 
-        ttk.Button(top, text="Lưu & Đóng", command=save).pack(pady=15)
+        ttk.Button(top, text="Lưu & Đóng", command=save).pack(pady=12)
+
+    def _toggle_provider_frames(self, frm_gemini, frm_mistral):
+        """Làm nổi bật frame của provider đang chọn, làm mờ frame còn lại."""
+        if self.provider.get() == "gemini":
+            frm_gemini.configure(style="TLabelframe")   # bình thường
+            frm_mistral.configure(style="Dim.TLabelframe") if False else None  # tkinter không có dim style sẵn
+            for w in frm_gemini.winfo_children():
+                try: w.configure(state="normal")
+                except: pass
+            for w in frm_mistral.winfo_children():
+                try: w.configure(state="disabled")
+                except: pass
+        else:
+            for w in frm_mistral.winfo_children():
+                try: w.configure(state="normal")
+                except: pass
+            for w in frm_gemini.winfo_children():
+                try: w.configure(state="disabled")
+                except: pass
 
     def start_process(self):
         input_d = self.input_dir.get().strip()
         if not input_d or not os.path.isdir(input_d):
             messagebox.showerror("Lỗi", "Vui lòng chọn thư mục Input hợp lệ!")
             return
-        
-        if not self.api_key.get().strip():
+
+        provider = self.provider.get()
+        if provider == "gemini" and not self.api_key.get().strip():
             messagebox.showerror("Lỗi", "Vui lòng nhập Gemini API Key trong phần Cài đặt!")
+            return
+        if provider == "mistral" and not self.mistral_api_key.get().strip():
+            messagebox.showerror("Lỗi", "Vui lòng nhập Mistral API Key trong phần Cài đặt (hoặc đặt biến môi trường MISTRAL_API_KEY)!")
             return
 
         self.btn_start.config(state="disabled")
@@ -259,15 +333,75 @@ class BienMucApp:
         self.txt_log.config(state="normal")
         self.txt_log.delete(1.0, tk.END)
         self.txt_log.config(state="disabled")
-        
+
         thread = threading.Thread(target=self.process_thread)
         thread.daemon = True
         thread.start()
 
+    # ------------------------------------------------------------------
+    # Helper: Gọi AI theo provider đang chọn
+    # Trả về dict JSON đã parse, hoặc raise Exception nếu thất bại
+    # ------------------------------------------------------------------
+    def _call_ai(self, prompt: str, response_schema, models_to_try: list) -> dict:
+        """Gọi provider AI (Gemini hoặc Mistral) lần lượt qua danh sách models.
+        Trả về dict đã parse JSON. Raise Exception nếu tất cả model thất bại."""
+        provider = self.provider.get()
+        last_exc = None
+
+        for m_idx, m_name in enumerate(models_to_try):
+            self.log(f"  Thử model: {m_name} ({provider.upper()})...")
+            try:
+                if provider == "gemini":
+                    model_obj = genai.GenerativeModel(m_name)
+                    res = model_obj.generate_content(
+                        prompt,
+                        generation_config=genai.GenerationConfig(
+                            response_mime_type="application/json",
+                            response_schema=response_schema
+                        ),
+                        request_options={"timeout": 240}
+                    )
+                    result = json.loads(res.text)
+                else:  # mistral
+                    MISTRAL_BASE_URL = "https://api.mistral.ai/v1"
+                    client = OpenAI(
+                        api_key=self.mistral_api_key.get().strip(),
+                        base_url=MISTRAL_BASE_URL
+                    )
+                    # Xây schema JSON từ TypedDict annotations
+                    import json as _json
+                    schema_fields = response_schema.__annotations__ if hasattr(response_schema, "__annotations__") else {}
+                    response_format = {
+                        "type": "json_object"
+                    }
+                    chat_res = client.chat.completions.create(
+                        model=m_name,
+                        messages=[{"role": "user", "content": prompt}],
+                        response_format=response_format,
+                        timeout=240
+                    )
+                    result = json.loads(chat_res.choices[0].message.content)
+
+                return result
+
+            except Exception as ex:
+                self.log(f"  ⚠ Lỗi model {m_name}: {ex}")
+                last_exc = ex
+                if m_idx < len(models_to_try) - 1:
+                    time.sleep(1)
+
+        raise Exception(f"Tất cả model thất bại. Lỗi cuối: {last_exc}")
+
     def process_thread(self):
         try:
             self.log("=== BẮT ĐẦU TIẾN TRÌNH ===")
-            genai.configure(api_key=self.api_key.get().strip())
+            provider = self.provider.get()
+            self.log(f"Provider đang dùng: {provider.upper()}")
+
+            if provider == "gemini":
+                genai.configure(api_key=self.api_key.get().strip())
+            # Mistral dùng OpenAI client, không cần configure global
+
             model_name = self.model_name.get().strip()
             
             # Lấy mã bản tin từ giao diện
@@ -368,43 +502,31 @@ class BienMucApp:
                     rtf_raw = f.read().decode('utf-8', errors='replace')
                 ekip_text = rtf_to_text(rtf_raw)
                 
-                model_crew_name = model_name
                 prompt_crew = f"""
 Trích xuất thông tin người đảm nhận các chức danh từ văn bản ê-kíp chương trình. Nếu chức danh không có tên người, trả về chuỗi rỗng "". Tên người VIẾT HOA.
 Văn bản:
 {ekip_text}
 """
-                models_to_try = [
-                    self.model_name.get().strip(),
-                    self.fallback_model_1.get().strip(),
-                    self.fallback_model_2.get().strip()
-                ]
+                provider = self.provider.get()
+                if provider == "mistral":
+                    models_to_try = [
+                        self.mistral_model_name.get().strip(),
+                        self.mistral_fallback_1.get().strip(),
+                        self.mistral_fallback_2.get().strip()
+                    ]
+                else:
+                    models_to_try = [
+                        self.model_name.get().strip(),
+                        self.fallback_model_1.get().strip(),
+                        self.fallback_model_2.get().strip()
+                    ]
                 models_to_try = [m for m in models_to_try if m]
 
-                success_crew = False
-                for m_idx, m_name in enumerate(models_to_try):
-                    self.log(f"  Thử bóc tách ê-kíp bằng model: {m_name}...")
-                    try:
-                        model_crew = genai.GenerativeModel(m_name)
-                        res_crew = model_crew.generate_content(
-                            prompt_crew,
-                            generation_config=genai.GenerationConfig(
-                                response_mime_type="application/json",
-                                response_schema=CrewList
-                            ),
-                            request_options={"timeout": 240}
-                        )
-                        crew_data = json.loads(res_crew.text)
-                        success_crew = True
-                        self.log(f"  ✓ Bóc tách ê-kíp thành công bằng model: {m_name}")
-                        break
-                    except Exception as e:
-                        self.log(f"  ⚠ Lỗi khi bóc tách bằng model {m_name}: {e}")
-                        if m_idx < len(models_to_try) - 1:
-                            time.sleep(1)
-                
-                if not success_crew:
-                    self.log("  ⚠ CẢNH BÁO: Tất cả các model đều thất bại khi bóc tách ê-kíp.")
+                try:
+                    crew_data = self._call_ai(prompt_crew, CrewList, models_to_try)
+                    self.log("  ✓ Bóc tách ê-kíp thành công.")
+                except Exception as e:
+                    self.log(f"  ⚠ CẢNH BÁO: Tất cả các model đều thất bại khi bóc tách ê-kíp: {e}")
                     crew_data = {k: "" for k in ["chiu_trach_nhiem", "bien_tap", "bien_dich", "hien_dan", "dao_dien", "ky_thuat", "trang_diem"]}
             else:
                 self.log("Không tìm thấy file NHUNG NGUOI THUC HIEN.rtf, bỏ qua ê-kíp.")
@@ -473,6 +595,28 @@ Văn bản:
                     rtf_raw = f.read().decode('utf-8', errors='replace')
                 news_text = rtf_to_text(rtf_raw)
 
+                # Bóc tách tiêu đề theo định dạng: dòng đầu tiên in đậm (\b), in HOA, màu xanh lá cây (\cf2)
+                tieu_de_tu_dinh_dang = ""
+                try:
+                    paragraphs = rtf_raw.split(r'\par')
+                    for p in paragraphs:
+                        p_clean = p.strip()
+                        if not p_clean:
+                            continue
+                        is_green = r'\cf2' in p_clean
+                        is_bold = r'\b' in p_clean and (r'\b0' not in p_clean or p_clean.index(r'\b') < p_clean.index(r'\b0'))
+                        if is_green and is_bold:
+                            rtf_wrapped = r"{\rtf1\ansi " + p_clean + r"}"
+                            txt = rtf_to_text(rtf_wrapped).strip()
+                            txt = re.sub(r'\s+', ' ', txt)
+                            if txt and txt.isupper() and len(txt) > 3:
+                                tieu_de_tu_dinh_dang = txt
+                                break
+                    if tieu_de_tu_dinh_dang:
+                        self.log(f"  ✓ Tìm thấy tiêu đề định dạng: '{tieu_de_tu_dinh_dang}'")
+                except Exception as e:
+                    self.log(f"  ⚠ Lỗi khi trích xuất tiêu đề theo định dạng: {e}")
+
                 # Cắt bỏ nội dung từ dòng có 3 ký tự '=' liên tục trở lên đến cuối
                 filtered_lines = []
                 for line in news_text.split('\n'):
@@ -490,43 +634,35 @@ Trích xuất thông tin từ kịch bản bản tin sau.
 Văn bản:
 {news_text}
 """
-                models_to_try = [
-                    self.model_name.get().strip(),
-                    self.fallback_model_1.get().strip(),
-                    self.fallback_model_2.get().strip()
-                ]
+                provider = self.provider.get()
+                if provider == "mistral":
+                    models_to_try = [
+                        self.mistral_model_name.get().strip(),
+                        self.mistral_fallback_1.get().strip(),
+                        self.mistral_fallback_2.get().strip()
+                    ]
+                else:
+                    models_to_try = [
+                        self.model_name.get().strip(),
+                        self.fallback_model_1.get().strip(),
+                        self.fallback_model_2.get().strip()
+                    ]
                 models_to_try = [m for m in models_to_try if m]
 
                 news_parsed = {}
                 success_news = False
-                for m_idx, m_name in enumerate(models_to_try):
-                    try:
-                        self.log(f"  Thử bóc tách bằng model: {m_name}...")
-                        model_rtf = genai.GenerativeModel(m_name)
-                        res_news = model_rtf.generate_content(
-                            prompt_news,
-                            generation_config=genai.GenerationConfig(
-                                response_mime_type="application/json",
-                                response_schema=RtfParseResult
-                            ),
-                            request_options={"timeout": 240}
-                        )
-                        news_parsed = json.loads(res_news.text)
-                        # Kiểm tra noi_dung có thực sự có nội dung không
-                        if news_parsed.get("noi_dung") and len(news_parsed["noi_dung"]) > 0:
-                            success_news = True
-                            self.log(f"  ✓ Bóc tách thành công bằng model: {m_name}")
-                            break  # Thành công thật sự
-                        else:
-                            self.log(f"  ⚠ Model {m_name} trả về noi_dung rỗng cho {os.path.basename(rtf_path)}.")
-                            if m_idx < len(models_to_try) - 1:
-                                time.sleep(1)
-                    except Exception as ex:
-                        self.log(f"  ⚠ Lỗi khi bóc tách bằng model {m_name}: {ex}")
-                        if m_idx < len(models_to_try) - 1:
-                            time.sleep(1)
+                # Thử gọi AI – nếu thành công nhưng noi_dung rỗng thì cũng xem là thất bại
+                try:
+                    news_parsed = self._call_ai(prompt_news, RtfParseResult, models_to_try)
+                    if news_parsed.get("noi_dung") and len(news_parsed["noi_dung"]) > 0:
+                        success_news = True
+                        self.log(f"  ✓ Bóc tách thành công.")
+                    else:
+                        self.log(f"  ⚠ AI trả về noi_dung rỗng cho {os.path.basename(rtf_path)}.")
+                except Exception as ex:
+                    self.log(f"  ⚠ Tất cả model thất bại cho {os.path.basename(rtf_path)}: {ex}")
                 
-                tieu_de_ai = news_parsed.get("tieu_de", "").strip()
+                tieu_de_ai = tieu_de_tu_dinh_dang if tieu_de_tu_dinh_dang else news_parsed.get("tieu_de", "").strip()
                 noi_dung_parsed = news_parsed.get("noi_dung", [])
 
                 if not tieu_de_ai:
