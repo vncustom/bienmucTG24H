@@ -1,6 +1,6 @@
 # Ứng dụng Tự Động Biên Mục Bản Tin Thế Giới 24H (TG24H)
 
-Ứng dụng Desktop giúp tự động hóa quy trình biên mục bản tin **Thế Giới 24H** của HTV. Hỗ trợ hai nhà cung cấp **Gemini API (Provider 1)** và **Mistral AI API (Provider 2)** để bóc tách nội dung từ các file kịch bản `.rtf` và sinh ra 3 file Excel đầu ra theo chuẩn biên mục của Trung tâm Tư liệu HTV.
+Ứng dụng Desktop giúp tự động hóa quy trình biên mục bản tin **Thế Giới 24H** của HTV. Hỗ trợ hai nhà cung cấp dịch vụ AI (**Provider 1** và **Provider 2**) để bóc tách nội dung từ các file kịch bản `.rtf` và sinh ra 3 file Excel đầu ra theo chuẩn biên mục của Trung tâm Tư liệu HTV.
 
 ---
 
@@ -27,14 +27,12 @@ python app_bien_muc_tg24h.py
 
 Nhấn nút **⚙ Cài đặt API** để mở hộp thoại cài đặt:
 - **Chọn Provider**:
-  - **Gemini (Mặc định)**: Sử dụng các mô hình của Google Gemini.
-  - **Mistral**: Sử dụng các mô hình của Mistral AI.
-- **Provider 1 – Gemini**:
-  - **Gemini API Key**: Lấy tại [aistudio.google.com](https://aistudio.google.com/apikey).
-  - **Models**: Thiết lập Model chính (`gemini-1.5-flash`) và 2 model dự phòng (`gemini-1.5-pro`, `gemini-2.0-flash`).
-- **Provider 2 – Mistral**:
-  - **Mistral API Key**: Nhập key thủ công hoặc khai báo biến môi trường `MISTRAL_API_KEY`.
-  - **Models**: Thiết lập Model chính (`mistral-medium-latest`) và 2 model dự phòng (`mistral-small-latest`, `mistral-small-2409`).
+  - **Provider 1 (Mặc định)**: Sử dụng nhà cung cấp dịch vụ thứ nhất.
+  - **Provider 2**: Sử dụng nhà cung cấp dịch vụ thứ hai.
+- **Provider 1**:
+  - **API Key Provider 1**: Điền API key tương ứng.
+- **Provider 2**:
+  - **API Key Provider 2**: Điền API key tương ứng (hoặc khai báo biến môi trường).
 
 > Cấu hình được lưu vào file `config.json` cục bộ (được tự động bỏ qua khi commit).
 

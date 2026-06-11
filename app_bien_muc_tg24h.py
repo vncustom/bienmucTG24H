@@ -284,63 +284,62 @@ class BienMucApp:
         self.progress_var.set(val)
         self.root.update_idletasks()
 
+    def _get_provider_display_name(self, provider: str) -> str:
+        if provider.lower() == "gemini":
+            return "Provider 1"
+        elif provider.lower() == "mistral":
+            return "Provider 2"
+        return provider
+
+    def _get_model_display_name(self, m_name: str) -> str:
+        m_name = m_name.strip()
+        if m_name == self.model_name.get().strip() or m_name == self.mistral_model_name.get().strip():
+            return "Primary"
+        elif m_name == self.fallback_model_1.get().strip() or m_name == self.mistral_fallback_1.get().strip():
+            return "Fallback 1"
+        elif m_name == self.fallback_model_2.get().strip() or m_name == self.mistral_fallback_2.get().strip():
+            return "Fallback 2"
+        return m_name
+
     def open_settings(self):
         top = tk.Toplevel(self.root)
-        top.title("Cài đặt API & Models")
-        top.geometry("540x580")
+        top.title("Cài đặt API")
+        top.geometry("540x300")
         top.resizable(False, False)
         top.transient(self.root)
         top.grab_set()
 
         # --- Chọn Provider ---
-        frm_provider = ttk.LabelFrame(top, text="Provider AI", padding=(10, 6))
+        frm_provider = ttk.LabelFrame(top, text="Nhà cung cấp dịch vụ (Provider)", padding=(10, 6))
         frm_provider.pack(fill="x", padx=10, pady=(10, 5))
-        ttk.Radiobutton(frm_provider, text="Provider 1 – Gemini (mặc định)",
+        ttk.Radiobutton(frm_provider, text="Provider 1 (mặc định)",
                         variable=self.provider, value="gemini",
                         command=lambda: self._toggle_provider_frames(frm_gemini, frm_mistral)).pack(anchor="w")
-        ttk.Radiobutton(frm_provider, text="Provider 2 – Mistral",
+        ttk.Radiobutton(frm_provider, text="Provider 2",
                         variable=self.provider, value="mistral",
                         command=lambda: self._toggle_provider_frames(frm_gemini, frm_mistral)).pack(anchor="w")
 
         # --- Frame Gemini ---
-        frm_gemini = ttk.LabelFrame(top, text="Cấu hình Gemini", padding=(10, 6))
+        frm_gemini = ttk.LabelFrame(top, text="Cấu hình Provider 1", padding=(10, 6))
         frm_gemini.pack(fill="x", padx=10, pady=5)
 
-        ttk.Label(frm_gemini, text="Gemini API Key:").pack(anchor="w")
+        ttk.Label(frm_gemini, text="API Key Provider 1:").pack(anchor="w")
         ent_key = ttk.Entry(frm_gemini, textvariable=self.api_key, show="*")
         ent_key.pack(fill="x", pady=(0, 5))
 
-        ttk.Label(frm_gemini, text="Model Chính (VD: gemini-1.5-flash):").pack(anchor="w")
-        ttk.Entry(frm_gemini, textvariable=self.model_name).pack(fill="x", pady=(0, 5))
-
-        ttk.Label(frm_gemini, text="Model Dự phòng 1 (VD: gemini-1.5-pro):").pack(anchor="w")
-        ttk.Entry(frm_gemini, textvariable=self.fallback_model_1).pack(fill="x", pady=(0, 5))
-
-        ttk.Label(frm_gemini, text="Model Dự phòng 2 (VD: gemini-2.0-flash):").pack(anchor="w")
-        ttk.Entry(frm_gemini, textvariable=self.fallback_model_2).pack(fill="x")
-
         # --- Frame Mistral ---
-        frm_mistral = ttk.LabelFrame(top, text="Cấu hình Mistral", padding=(10, 6))
+        frm_mistral = ttk.LabelFrame(top, text="Cấu hình Provider 2", padding=(10, 6))
         frm_mistral.pack(fill="x", padx=10, pady=5)
 
-        ttk.Label(frm_mistral, text="Mistral API Key (hoặc đặt biến MISTRAL_API_KEY):").pack(anchor="w")
+        ttk.Label(frm_mistral, text="API Key Provider 2:").pack(anchor="w")
         ttk.Entry(frm_mistral, textvariable=self.mistral_api_key, show="*").pack(fill="x", pady=(0, 5))
-
-        ttk.Label(frm_mistral, text="Model Chính (VD: mistral-medium-latest):").pack(anchor="w")
-        ttk.Entry(frm_mistral, textvariable=self.mistral_model_name).pack(fill="x", pady=(0, 5))
-
-        ttk.Label(frm_mistral, text="Model Dự phòng 1 (VD: mistral-small-latest):").pack(anchor="w")
-        ttk.Entry(frm_mistral, textvariable=self.mistral_fallback_1).pack(fill="x", pady=(0, 5))
-
-        ttk.Label(frm_mistral, text="Model Dự phòng 2 (VD: mistral-small-2409):").pack(anchor="w")
-        ttk.Entry(frm_mistral, textvariable=self.mistral_fallback_2).pack(fill="x")
 
         # Áp dụng trạng thái ẩn/hiện ban đầu
         self._toggle_provider_frames(frm_gemini, frm_mistral)
 
         def save():
             self.save_config()
-            self.log(f"Đã lưu cấu hình – Provider: {self.provider.get().upper()}.")
+            self.log(f"Đã lưu cấu hình – Provider: {self._get_provider_display_name(self.provider.get())}.")
             top.destroy()
 
         ttk.Button(top, text="Lưu & Đóng", command=save).pack(pady=12)
@@ -372,10 +371,10 @@ class BienMucApp:
 
         provider = self.provider.get()
         if provider == "gemini" and not self.api_key.get().strip():
-            messagebox.showerror("Lỗi", "Vui lòng nhập Gemini API Key trong phần Cài đặt!")
+            messagebox.showerror("Lỗi", "Vui lòng nhập API Key Provider 1 trong phần Cài đặt!")
             return
         if provider == "mistral" and not self.mistral_api_key.get().strip():
-            messagebox.showerror("Lỗi", "Vui lòng nhập Mistral API Key trong phần Cài đặt (hoặc đặt biến môi trường MISTRAL_API_KEY)!")
+            messagebox.showerror("Lỗi", "Vui lòng nhập API Key Provider 2 trong phần Cài đặt!")
             return
 
         self.btn_start.config(state="disabled")
@@ -600,7 +599,7 @@ class BienMucApp:
         last_exc = None
 
         for m_idx, m_name in enumerate(models_to_try):
-            self.log(f"  Thử model: {m_name} ({provider.upper()})...")
+            self.log(f"  Thử model: {self._get_model_display_name(m_name)} ({self._get_provider_display_name(provider)})...")
             try:
                 if provider == "gemini":
                     model_obj = genai.GenerativeModel(m_name)
@@ -636,7 +635,7 @@ class BienMucApp:
                 return result
 
             except Exception as ex:
-                self.log(f"  ⚠ Lỗi model {m_name}: {ex}")
+                self.log(f"  ⚠ Lỗi model {self._get_model_display_name(m_name)}: {ex}")
                 last_exc = ex
                 if m_idx < len(models_to_try) - 1:
                     time.sleep(1)
@@ -647,20 +646,23 @@ class BienMucApp:
         try:
             self.log("=== BẮT ĐẦU TIẾN TRÌNH ===")
             provider = self.provider.get()
-            self.log(f"Provider đang dùng: {provider.upper()}")
+            self.log(f"Provider đang dùng: {self._get_provider_display_name(provider)}")
 
             if provider == "gemini":
                 genai.configure(api_key=self.api_key.get().strip())
             # Mistral dùng OpenAI client, không cần configure global
 
-            model_name = self.model_name.get().strip()
+            if provider == "gemini":
+                model_name = self.model_name.get().strip()
+            else:
+                model_name = self.mistral_model_name.get().strip()
             
             # Lấy mã bản tin từ giao diện
             a090_val = self.a090_entry.get().strip()
             if not a090_val:
                 a090_val = "K303419"
             
-            self.log(f"Đang sử dụng model: {model_name}")
+            self.log(f"Đang sử dụng model: {self._get_model_display_name(model_name)}")
             
             input_d = self.input_dir.get().strip()
             output_d = self.output_dir.get().strip()
