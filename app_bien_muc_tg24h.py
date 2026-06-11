@@ -244,10 +244,9 @@ class BienMucApp:
         frame_note = ttk.LabelFrame(self.root, text="Lưu ý định dạng đầu vào để bóc tách đúng", padding=(10, 5))
         frame_note.pack(fill="x", padx=10, pady=5)
         note_text = (
-            "• File LIST (Excel): Bắt đầu bằng 'BTTG24H_' (.xlsx). Dữ liệu đọc từ active sheet.\n"
-            "   Cột A: Tên file (bắt đầu bằng '24H-' hoặc 'GAT24H-'), Cột C: ID.\n"
-            "• File Ê-kíp: File 'NHUNG NGUOI THUC HIEN.rtf' hoặc file tiền tố 'BGĐ ', 'BT ', 'BD ', 'MC ', 'ĐD ', 'KT '.\n"
-            " "
+            "• File LIST (Excel): Bắt đầu bằng 'BTTG24H_' (.xlsx).\n"
+            "   Cột A: Tên file ('24H-' hoặc 'GAT24H-'), Cột C: ID.\n"
+            ".\n"
         )
         ttk.Label(frame_note, text=note_text, justify="left", font=("Arial", 9)).pack(anchor="w")
 
@@ -277,6 +276,13 @@ class BienMucApp:
         self.txt_log.insert(tk.END, f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {message}\n")
         self.txt_log.see(tk.END)
         self.txt_log.config(state="disabled")
+
+    def set_progress(self, val):
+        self.root.after(0, self._set_progress_gui, val)
+
+    def _set_progress_gui(self, val):
+        self.progress_var.set(val)
+        self.root.update_idletasks()
 
     def open_settings(self):
         top = tk.Toplevel(self.root)
@@ -373,7 +379,7 @@ class BienMucApp:
             return
 
         self.btn_start.config(state="disabled")
-        self.progress_var.set(0)
+        self.set_progress(0)
         self.txt_log.config(state="normal")
         self.txt_log.delete(1.0, tk.END)
         self.txt_log.config(state="disabled")
@@ -683,7 +689,7 @@ class BienMucApp:
             self.log(f"Đã tìm thấy file danh sách: {list_files[0]}")
 
             # Đọc file LIST ra dạng text thô để gửi cho Gemini
-            self.progress_var.set(10)
+            self.set_progress(10)
             self.log("Đọc dữ liệu file LIST...")
             wb_list = openpyxl.load_workbook(list_file_path, data_only=True)
             ws_list = wb_list.active
@@ -750,7 +756,7 @@ class BienMucApp:
             self.log(f"Đã tìm thấy {len(danh_sach_tin)} bản tin chính. Ngày phát sóng: {ngay_phat}")
 
             # 3. Parse NHUNG NGUOI THUC HIEN.rtf
-            self.progress_var.set(20)
+            self.set_progress(20)
             ekip_file = os.path.join(input_d, "NHUNG NGUOI THUC HIEN.rtf")
             crew_data = {}
             if os.path.exists(ekip_file):
@@ -1043,7 +1049,7 @@ Văn bản:
                     "internal_content": internal_content
                 })
 
-                self.progress_var.set(20 + (idx + 1) / total_tin * 60) # Cập nhật progress 20 -> 80%
+                self.set_progress(20 + (idx + 1) / total_tin * 50) # Cập nhật progress 20 -> 70%
 
             # 5. Sinh Output 1: Import_SoLuoc
             self.log("Đang tạo file Output 1: Import_SoLuoc...")
@@ -1130,7 +1136,7 @@ Văn bản:
             self.log(f"  ✓ Đã tạo file: {os.path.basename(fn1_tt)}")
 
             # 6. Sinh Output 2: Map_BanTinTG
-            self.progress_var.set(85)
+            self.set_progress(75)
             self.log("Đang tạo file Output 2: Map_BanTinTG...")
             wb2 = openpyxl.Workbook()
             ws2 = wb2.active
@@ -1222,7 +1228,7 @@ Văn bản:
             self.log(f"  ✓ Đã tạo file: {os.path.basename(fn2_tt)}")
 
             # 7. Sinh Output 3: Map_ChiTiet (AI)
-            self.progress_var.set(90)
+            self.set_progress(80)
             self.log("Đang tạo file Output 3: Map_ChiTiet (AI)...")
             wb3 = openpyxl.Workbook()
             ws3 = wb3.active
@@ -1261,7 +1267,7 @@ Văn bản:
             wb3.save(fn3)
 
             # 8. Sinh Output 4: Map_ChiTiet_ThuatToan (hoàn toàn từ thuật toán nội bộ)
-            self.progress_var.set(95)
+            self.set_progress(90)
             self.log("Đang tạo file Output 4: Map_ChiTiet_ThuatToan (thuật toán nội bộ)...")
             wb4 = openpyxl.Workbook()
             ws4 = wb4.active
@@ -1312,25 +1318,18 @@ Văn bản:
             
             if discrepancies:
                 self.log("")
-                self.log("⚠ CẢNH BÁO: Số dòng không trùng khớp giữa Map_ChiTiet (AI) và Map_ChiTiet_ThuatToan:")
-                warn_lines = []
+                self.log("Phát hiện số dòng không trùng khớp giữa AI và ThuatToan:")
                 for d in discrepancies:
                     msg = f"Tin {d['id']}: AI={d['ai']} dòng, ThuậtToán={d['tt']} dòng"
                     self.log(f"  ▸ {msg}")
-                    warn_lines.append(f"• {msg}")
-                self.log("Vui lòng mở 2 file và kiểm tra lại những tin trên.")
+                self.log("Đề nghị kiểm tay những tin trên.")
                 self.log("")
-                
-                warn_msg = "Số dòng không trùng khớp giữa Map_ChiTiet (AI) và Map_ChiTiet_ThuatToan:\n\n"
-                warn_msg += "\n".join(warn_lines)
-                warn_msg += "\n\nVui lòng mở 2 file và kiểm tra lại."
-                messagebox.showwarning("Cảnh báo kiểm tra Map_ChiTiet", warn_msg)
             else:
                 self.log("✓ Số dòng mỗi tin trong Map_ChiTiet (AI) và Map_ChiTiet_ThuatToan trùng khớp.")
 
-            self.progress_var.set(100)
+            self.set_progress(100)
             self.log("=== HOÀN TẤT BIÊN MỤC ===")
-            messagebox.showinfo("Thành công", f"Đã sinh các file output thành công:\n- AI Output (Thư mục Output): {output_d}\n- Thuật toán (tempbienmuc): {temp_d}")
+            messagebox.showinfo("Thành công", f"Đã sinh các file output thành công tại:\n{output_d}")
 
         except Exception as e:
             err_msg = traceback.format_exc()

@@ -80,40 +80,49 @@ input/
 
 ## File Output được tạo ra
 
-Các file đầu ra luôn được định dạng với **font Times New Roman, cỡ chữ 11**. Ngoài ra, **cột B và C** của cả 3 file được tự động mở rộng gấp 3 lần chiều rộng mặc định (~30 ký tự) để hiển thị rõ nội dung:
+Các file đầu ra luôn được định dạng với **font Times New Roman, cỡ chữ 11**. Ngoài ra, **cột B và C** của các file được tự động mở rộng gấp 3 lần chiều rộng mặc định (~30 ký tự) để hiển thị rõ nội dung:
 
+### 1. Thư mục Output chính (Sử dụng AI kết hợp Định dạng/Thuật toán)
 | File | Mô tả |
 |------|-------|
 | `Import_SoLuoc_TG24H_YYYYMMDD.xlsx` | Danh sách sơ lược các bản tin, dùng để import vào hệ thống thư viện |
-| `Map_BanTinTG_24G_YYYYMMDD.xlsx` | Bảng mapping thông tin ê-kíp và mục lục phát sóng (dùng mã bản tin $a090 được cung cấp) |
+| `Map_BanTinTG_24G_YYYYMMDD.xlsx` | Bảng mapping thông tin ê-kíp và mục lục phát sóng (dùng mã bản tin $a090) |
 | `Map_ChiTiet_24G_YYYYMMDD.xlsx` | Nội dung chi tiết từng bản tin (người biên dịch + transcript) |
+
+### 2. Thư mục `tempbienmuc` (Sử dụng Thuật toán nội bộ - Không dùng AI)
+Thư mục này nằm cùng cấp với thư mục `input` và được tự động **dọn dẹp sạch sẽ (xóa toàn bộ file cũ)** mỗi khi bắt đầu tiến trình biên mục. Các file output dự phòng tại đây bao gồm:
+| File | Mô tả |
+|------|-------|
+| `Import_SoLuoc_TG24H_thuattoan_YYYYMMDD.xlsx` | Danh sách sơ lược các bản tin, tạo hoàn toàn bằng thuật toán bóc tách tiêu đề nội bộ |
+| `Map_BanTinTG_24G_thuattoan_YYYYMMDD.xlsx` | Bảng mapping ê-kíp (bóc tách bằng regex) và mục lục tạo hoàn toàn bằng thuật toán |
+| `Map_ChiTiet_ThuatToan_YYYYMMDD.xlsx` | Nội dung chi tiết từng bản tin bóc tách bằng thuật toán (người biên dịch nội bộ + transcript) |
 
 ---
 
-## Luồng xử lý & Cơ chế Dự phòng (Fallback)
+## Luồng xử lý & Thuật toán nội bộ (Không dùng AI)
 
-```
-File LIST (.xlsx)
-   └── Đọc bằng openpyxl (không dùng AI)
-       ├── Trích xuất ngày phát sóng
-       ├── Lọc danh sách bản tin chính (24H-, GAT24H-, ONLINE, ID 9 số)
-       └── Đọc thời lượng từ Cột F (format: 00:mm:ss)
+Ứng dụng kết hợp bóc tách bằng Trí tuệ nhân tạo (AI) và Thuật toán nội bộ chạy độc lập để đối chiếu chéo kết quả:
 
-NHUNG NGUOI THUC HIEN.rtf + Các file tiền tố
-   └── Gọi AI (Gemini hoặc Mistral) / Quét file tiền tố → Trích xuất ê-kíp (JSON)
+### 1. Thuật toán bóc tách Ê-kíp nội bộ
+- **Nguồn**: File `NHUNG NGUOI THUC HIEN.rtf`
+- **Cơ chế**: Quét văn bản đã chuyển đổi sang plain text bằng các mẫu biểu thức chính quy (Regex) tương ứng với từng chức danh.
+- **Fallback**: Nếu thiếu chức danh nào, tự động dò tìm các file RTF phụ có tiền tố tương ứng (`BGĐ `, `BT `, `BD `, `MC `, `ĐD `, `KT `) để lấy tên người thực hiện từ tên file.
 
-Mỗi file RTF tin chính (24H-*.rtf / GAT24H-*.rtf)
-   ├── Tách và lấy tiêu đề trực tiếp bằng định dạng RTF (In đậm + In hoa + Màu xanh)
-   ├── Cắt bỏ phần văn bản nhiễu (kể từ dòng chứa từ 3 ký tự '=' liên tiếp)
-   └── Gửi văn bản đã xử lý qua AI (Gemini hoặc Mistral) theo cơ chế fallback:
-        ├── 1. Gọi Model Chính (Gemini hoặc Mistral tương ứng) với timeout 4 phút.
-        ├── 2. Dự phòng 1: Nếu lỗi, chuyển sang Model Dự phòng 1.
-        ├── 3. Dự phòng 2: Nếu lỗi tiếp, chuyển sang Model Dự phòng 2.
-        └── 4. Dự phòng không dùng AI: Nếu tất cả đều lỗi, tự động bóc tách bằng thuật toán
-               (Lấy tất cả các đoạn văn bản phía dưới tiêu đề chính).
+### 2. Thuật toán bóc tách Tiêu đề, Biên dịch và Nội dung tin
+- **Tiêu đề**: Dòng chữ in HOA + in đậm + màu xanh lá cây đầu tiên trong file RTF. Nếu không khớp định dạng, tự động fallback tìm dòng viết hoa đầu tiên dài hơn 10 ký tự (loại trừ nhãn gạt/headlines).
+- **Biên dịch**: Dòng chữ không chứa chữ số hoặc các từ khóa của metadata nằm ngay trước dòng tiêu đề trong phạm vi 7 dòng.
+- **Nội dung tin**: Lọc bỏ các dòng nhiễu (dòng separator `==`, tên tiếng Anh, link hình/video, ngày tháng).
+  - Với tin thường: Lấy từ dưới tiêu đề đến chữ **màu đen cuối cùng**.
+  - Với tin LIVE (tên file chứa chữ "LIVE"): Lấy từ dưới tiêu đề đến chữ **màu đỏ cuối cùng**, đồng thời tự động loại bỏ các dòng chữ màu xanh lá cây không in đậm.
 
-→ Tổng hợp → Sinh 3 file Excel output (Times New Roman, cỡ 11, tăng chiều rộng cột B và C)
-```
+### 3. Cơ chế đối chiếu & Hiển thị tiến trình
+- **Đối chiếu chéo**: Sau khi sinh các file, app so sánh số dòng của từng bản tin giữa `Map_ChiTiet` (AI) và `Map_ChiTiet_ThuatToan`.
+- **Thông báo**: Nếu phát hiện sự chênh lệch, app ghi nhận nhẹ nhàng trong khung log tiến trình:
+  `Phát hiện số dòng không trùng khớp giữa AI và ThuatToan:`
+  `  ▸ Tin {ID}: AI={ai} dòng, ThuậtToán={tt} dòng`
+  `Đề nghị kiểm tay những tin trên.`
+  *(Không hiển thị popup cảnh báo làm phiền người dùng)*.
+- **Thanh tiến độ**: Được thiết kế chạy realtime thread-safe mượt mà từ 0% đến 100% giúp giao diện không bị giật hoặc treo.
 
 ---
 
