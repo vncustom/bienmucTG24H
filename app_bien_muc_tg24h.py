@@ -1001,6 +1001,8 @@ Văn bản:
                     try:
                         paragraphs = re.split(r'\\par(?![a-zA-Z])', rtf_raw)
                         filtered_paragraphs = []
+                        found_title = False
+                        seen_content_after_title = False
                         for idx, p in enumerate(paragraphs):
                             p_clean = p.strip()
                             if not p_clean:
@@ -1017,14 +1019,28 @@ Văn bản:
                             txt = rtf_to_text(rtf_wrapped).strip()
                             txt = re.sub(r'\s+', ' ', txt)
 
-                            # Với LIVE: bỏ green non-bold, NGOẠI TRỪ dòng viết HOA
-                            # (dòng HOA là phụ đề/subtitle, cần giữ lại)
-                            if has_green and not is_bold:
-                                if not (txt and txt.isupper() and len(txt) > 3):
-                                    continue
+                            if not txt:
+                                continue
 
-                            if txt:
-                                filtered_paragraphs.append(txt)
+                            # Phát hiện tiêu đề: green + bold + HOA
+                            if not found_title and has_green and is_bold and txt.isupper() and len(txt) > 3:
+                                txt_upper = txt.upper()
+                                if not any(k in txt_upper for k in ["GẠT TG", "GAT TG", "GAT24", "GẠT24", "HEADLINES"]):
+                                    found_title = True
+
+                            # Phát hiện nội dung đỏ/đen sau tiêu đề
+                            if found_title and not has_green and len(txt) > 2:
+                                seen_content_after_title = True
+
+                            # Lọc green non-bold theo vị trí:
+                            if has_green and not is_bold:
+                                # Giữ phụ đề HOA nằm giữa tiêu đề và nội dung đỏ/đen
+                                if found_title and not seen_content_after_title and txt.isupper() and len(txt) > 3:
+                                    pass  # Giữ lại (phụ đề)
+                                else:
+                                    continue  # Bỏ (metadata trước tiêu đề / CG text sau nội dung)
+
+                            filtered_paragraphs.append(txt)
                         news_text = '\n'.join(filtered_paragraphs)
                     except Exception as e:
                         self.log(f"  ⚠ Lỗi khi lọc tin LIVE: {e}. Fallback sang text thô.")
@@ -1134,7 +1150,8 @@ Văn bản:
                     "noi_dung": noi_dung_parsed,
                     "internal_title": internal_title,
                     "internal_translator": internal_translator,
-                    "internal_content": internal_content
+                    "internal_content": internal_content,
+                    "is_live": is_live_feed
                 })
 
                 self.set_progress(20 + (idx + 1) / total_tin * 50) # Cập nhật progress 20 -> 70%
@@ -1328,14 +1345,20 @@ Văn bản:
 
             for idx, ct in enumerate(chi_tiet_tin):
                 id_tin = ct["id"]
-                nguoi_bd = ct["nguoi_bien_dich"]
-                nd_list = ct["noi_dung"]
+                is_live = ct.get("is_live", False)
+                if is_live:
+                    nguoi_bd = ct.get("internal_translator", "")
+                    nd_list = ct.get("internal_content", [])
+                    clean_title = ct.get("internal_title", "").strip().lower() if ct.get("internal_title") else ""
+                else:
+                    nguoi_bd = ct["nguoi_bien_dich"]
+                    nd_list = ct["noi_dung"]
+                    clean_title = ct["tieu_de"].strip().lower() if ct.get("tieu_de") else ""
                 
                 val_a500_first = f"Biên dịch: {nguoi_bd}" if nguoi_bd else ""
                 
                 # Loại bỏ dòng trùng với tiêu đề chính (tieu_de)
                 filtered_nd = []
-                clean_title = ct["tieu_de"].strip().lower() if ct.get("tieu_de") else ""
                 for line in nd_list:
                     if clean_title and line.strip().lower() == clean_title:
                         continue
