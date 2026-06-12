@@ -927,7 +927,7 @@ Văn bản:
             chi_tiet_tin = [] # Chứa dict: id, a245, a500, a520_list
 
             total_tin = len(danh_sach_tin)
-            for idx, tin in enumerate(danh_sach_tin):
+            for tin_idx, tin in enumerate(danh_sach_tin):
                 id_tin = tin["id"]
                 ten_tin = tin["ten_file"]
                 
@@ -968,11 +968,11 @@ Văn bản:
                 tieu_de_tu_dinh_dang = ""
                 try:
                     paragraphs = re.split(r'\\par(?![a-zA-Z])', rtf_raw)
-                    for idx, p in enumerate(paragraphs):
+                    for p_idx, p in enumerate(paragraphs):
                         p_clean = p.strip()
                         if not p_clean:
                             continue
-                        if idx == 0:
+                        if p_idx == 0:
                             # Tránh duplicate header làm hỏng parsing dòng đầu tiên
                             pard_idx = p_clean.find(r'\pard')
                             if pard_idx != -1:
@@ -1003,11 +1003,11 @@ Văn bản:
                         filtered_paragraphs = []
                         found_title = False
                         seen_content_after_title = False
-                        for idx, p in enumerate(paragraphs):
+                        for p_idx, p in enumerate(paragraphs):
                             p_clean = p.strip()
                             if not p_clean:
                                 continue
-                            if idx == 0:
+                            if p_idx == 0:
                                 pard_idx = p_clean.find(r'\pard')
                                 if pard_idx != -1:
                                     p_clean = p_clean[pard_idx:]
@@ -1154,7 +1154,7 @@ Văn bản:
                     "is_live": is_live_feed
                 })
 
-                self.set_progress(20 + (idx + 1) / total_tin * 50) # Cập nhật progress 20 -> 70%
+                self.set_progress(20 + (tin_idx + 1) / total_tin * 50) # Cập nhật progress 20 -> 70%
 
             # 5. Sinh Output 1: Import_SoLuoc
             self.log("Đang tạo file Output 1: Import_SoLuoc...", to_gui=False)
