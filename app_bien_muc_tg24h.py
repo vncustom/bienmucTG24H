@@ -147,11 +147,18 @@ class BienMucApp:
         self.fallback_model_2 = tk.StringVar(value="gemini-2.0-flash") # Mặc định
 
         # --- Provider 2: Mistral ---
-        self.provider = tk.StringVar(value="gemini")  # "gemini" hoặc "mistral"
+        self.provider = tk.StringVar(value="gemini")  # "gemini", "mistral" hoặc "openai_compat"
         self.mistral_api_key = tk.StringVar()
         self.mistral_model_name = tk.StringVar(value="mistral-medium-latest")
         self.mistral_fallback_1 = tk.StringVar(value="mistral-small-latest")
         self.mistral_fallback_2 = tk.StringVar(value="mistral-small-2409")
+
+        # --- Provider 3: OpenAI-compatible ---
+        self.openai_compat_api_key = tk.StringVar()
+        self.openai_compat_base_url = tk.StringVar(value="https://api.groq.com/openai/v1")
+        self.openai_compat_model_name = tk.StringVar(value="openai/gpt-oss-120b")
+        self.openai_compat_fallback_1 = tk.StringVar(value="llama-3.3-70b-versatile")
+        self.openai_compat_fallback_2 = tk.StringVar(value="qwen/qwen3-32b")
         
         self.load_config()
         self.build_ui()
@@ -170,6 +177,11 @@ class BienMucApp:
                     self.mistral_model_name.set(cfg.get("mistral_model_name", "mistral-medium-latest"))
                     self.mistral_fallback_1.set(cfg.get("mistral_fallback_1", "mistral-small-latest"))
                     self.mistral_fallback_2.set(cfg.get("mistral_fallback_2", "mistral-small-2409"))
+                    self.openai_compat_api_key.set(cfg.get("openai_compat_api_key", ""))
+                    self.openai_compat_base_url.set(cfg.get("openai_compat_base_url", "https://api.groq.com/openai/v1"))
+                    self.openai_compat_model_name.set(cfg.get("openai_compat_model_name", "openai/gpt-oss-120b"))
+                    self.openai_compat_fallback_1.set(cfg.get("openai_compat_fallback_1", "llama-3.3-70b-versatile"))
+                    self.openai_compat_fallback_2.set(cfg.get("openai_compat_fallback_2", "qwen/qwen3-32b"))
             except Exception as e:
                 logging.error(f"Lỗi đọc config: {e}")
         
@@ -190,7 +202,12 @@ class BienMucApp:
                     "mistral_api_key": self.mistral_api_key.get(),
                     "mistral_model_name": self.mistral_model_name.get(),
                     "mistral_fallback_1": self.mistral_fallback_1.get(),
-                    "mistral_fallback_2": self.mistral_fallback_2.get()
+                    "mistral_fallback_2": self.mistral_fallback_2.get(),
+                    "openai_compat_api_key": self.openai_compat_api_key.get(),
+                    "openai_compat_base_url": self.openai_compat_base_url.get(),
+                    "openai_compat_model_name": self.openai_compat_model_name.get(),
+                    "openai_compat_fallback_1": self.openai_compat_fallback_1.get(),
+                    "openai_compat_fallback_2": self.openai_compat_fallback_2.get()
                 }, f, indent=4)
         except Exception as e:
             logging.error(f"Lỗi lưu config: {e}")
@@ -289,22 +306,24 @@ class BienMucApp:
             return "Provider 1"
         elif provider.lower() == "mistral":
             return "Provider 2"
+        elif provider.lower() == "openai_compat":
+            return "Provider 3"
         return provider
 
     def _get_model_display_name(self, m_name: str) -> str:
         m_name = m_name.strip()
-        if m_name == self.model_name.get().strip() or m_name == self.mistral_model_name.get().strip():
+        if m_name == self.model_name.get().strip() or m_name == self.mistral_model_name.get().strip() or m_name == self.openai_compat_model_name.get().strip():
             return "Primary"
-        elif m_name == self.fallback_model_1.get().strip() or m_name == self.mistral_fallback_1.get().strip():
+        elif m_name == self.fallback_model_1.get().strip() or m_name == self.mistral_fallback_1.get().strip() or m_name == self.openai_compat_fallback_1.get().strip():
             return "Fallback 1"
-        elif m_name == self.fallback_model_2.get().strip() or m_name == self.mistral_fallback_2.get().strip():
+        elif m_name == self.fallback_model_2.get().strip() or m_name == self.mistral_fallback_2.get().strip() or m_name == self.openai_compat_fallback_2.get().strip():
             return "Fallback 2"
         return m_name
 
     def open_settings(self):
         top = tk.Toplevel(self.root)
         top.title("Cài đặt API")
-        top.geometry("540x300")
+        top.geometry("560x460")
         top.resizable(False, False)
         top.transient(self.root)
         top.grab_set()
@@ -314,10 +333,13 @@ class BienMucApp:
         frm_provider.pack(fill="x", padx=10, pady=(10, 5))
         ttk.Radiobutton(frm_provider, text="Provider 1 (mặc định)",
                         variable=self.provider, value="gemini",
-                        command=lambda: self._toggle_provider_frames(frm_gemini, frm_mistral)).pack(anchor="w")
+                        command=lambda: self._toggle_provider_frames(frm_gemini, frm_mistral, frm_openai_compat)).pack(anchor="w")
         ttk.Radiobutton(frm_provider, text="Provider 2",
                         variable=self.provider, value="mistral",
-                        command=lambda: self._toggle_provider_frames(frm_gemini, frm_mistral)).pack(anchor="w")
+                        command=lambda: self._toggle_provider_frames(frm_gemini, frm_mistral, frm_openai_compat)).pack(anchor="w")
+        ttk.Radiobutton(frm_provider, text="Provider 3 (OpenAI-compatible)",
+                        variable=self.provider, value="openai_compat",
+                        command=lambda: self._toggle_provider_frames(frm_gemini, frm_mistral, frm_openai_compat)).pack(anchor="w")
 
         # --- Frame Gemini ---
         frm_gemini = ttk.LabelFrame(top, text="Cấu hình Provider 1", padding=(10, 6))
@@ -334,8 +356,17 @@ class BienMucApp:
         ttk.Label(frm_mistral, text="API Key Provider 2:").pack(anchor="w")
         ttk.Entry(frm_mistral, textvariable=self.mistral_api_key, show="*").pack(fill="x", pady=(0, 5))
 
+        # --- Frame OpenAI-compatible ---
+        frm_openai_compat = ttk.LabelFrame(top, text="Cấu hình Provider 3 (OpenAI-compatible)", padding=(10, 6))
+        frm_openai_compat.pack(fill="x", padx=10, pady=5)
+
+        ttk.Label(frm_openai_compat, text="API Key Provider 3:").pack(anchor="w")
+        ttk.Entry(frm_openai_compat, textvariable=self.openai_compat_api_key, show="*").pack(fill="x", pady=(0, 5))
+        ttk.Label(frm_openai_compat, text="Base URL (ví dụ: https://api.groq.com/openai/v1):").pack(anchor="w")
+        ttk.Entry(frm_openai_compat, textvariable=self.openai_compat_base_url).pack(fill="x", pady=(0, 5))
+
         # Áp dụng trạng thái ẩn/hiện ban đầu
-        self._toggle_provider_frames(frm_gemini, frm_mistral)
+        self._toggle_provider_frames(frm_gemini, frm_mistral, frm_openai_compat)
 
         def save():
             self.save_config()
@@ -344,29 +375,31 @@ class BienMucApp:
 
         ttk.Button(top, text="Lưu & Đóng", command=save).pack(pady=12)
 
-    def _toggle_provider_frames(self, frm_gemini, frm_mistral):
+    def _toggle_provider_frames(self, frm_gemini, frm_mistral, frm_openai_compat):
         """Làm nổi bật frame của provider đang chọn, làm mờ frame còn lại."""
-        if self.provider.get() == "gemini":
-            frm_gemini.configure(style="TLabelframe")   # bình thường
-            frm_mistral.configure(style="Dim.TLabelframe") if False else None  # tkinter không có dim style sẵn
-            for w in frm_gemini.winfo_children():
-                try: w.configure(state="normal")
-                except: pass
-            for w in frm_mistral.winfo_children():
-                try: w.configure(state="disabled")
-                except: pass
-        else:
-            for w in frm_mistral.winfo_children():
-                try: w.configure(state="normal")
-                except: pass
-            for w in frm_gemini.winfo_children():
-                try: w.configure(state="disabled")
-                except: pass
+        current = self.provider.get()
+        frames = {
+            "gemini": frm_gemini,
+            "mistral": frm_mistral,
+            "openai_compat": frm_openai_compat,
+        }
+        for prov, frm in frames.items():
+            state = "normal" if prov == current else "disabled"
+            for w in frm.winfo_children():
+                try:
+                    w.configure(state=state)
+                except:
+                    pass
 
     def start_process(self):
         input_d = self.input_dir.get().strip()
         if not input_d or not os.path.isdir(input_d):
             messagebox.showerror("Lỗi", "Vui lòng chọn thư mục Input hợp lệ!")
+            return
+
+        a090_val = self.a090_entry.get().strip()
+        if not a090_val or (a090_val == "K303419" and str(self.a090_entry.cget("foreground")) == "grey"):
+            messagebox.showerror("Lỗi", "Vui lòng nhập mã bản tin ($a090)!")
             return
 
         provider = self.provider.get()
@@ -375,6 +408,12 @@ class BienMucApp:
             return
         if provider == "mistral" and not self.mistral_api_key.get().strip():
             messagebox.showerror("Lỗi", "Vui lòng nhập API Key Provider 2 trong phần Cài đặt!")
+            return
+        if provider == "openai_compat" and not self.openai_compat_api_key.get().strip():
+            messagebox.showerror("Lỗi", "Vui lòng nhập API Key Provider 3 trong phần Cài đặt!")
+            return
+        if provider == "openai_compat" and not self.openai_compat_base_url.get().strip():
+            messagebox.showerror("Lỗi", "Vui lòng nhập Base URL Provider 3 trong phần Cài đặt!")
             return
 
         self.btn_start.config(state="disabled")
@@ -593,7 +632,7 @@ class BienMucApp:
     # Trả về dict JSON đã parse, hoặc raise Exception nếu thất bại
     # ------------------------------------------------------------------
     def _call_ai(self, prompt: str, response_schema, models_to_try: list) -> dict:
-        """Gọi provider AI (Gemini hoặc Mistral) lần lượt qua danh sách models.
+        """Gọi provider AI (Gemini, Mistral hoặc OpenAI-compatible) lần lượt qua danh sách models.
         Trả về dict đã parse JSON. Raise Exception nếu tất cả model thất bại."""
         provider = self.provider.get()
         last_exc = None
@@ -612,21 +651,36 @@ class BienMucApp:
                         request_options={"timeout": 240}
                     )
                     result = json.loads(res.text)
-                else:  # mistral
+                elif provider == "mistral":  # mistral
                     MISTRAL_BASE_URL = "https://api.mistral.ai/v1"
                     client = OpenAI(
                         api_key=self.mistral_api_key.get().strip(),
                         base_url=MISTRAL_BASE_URL
                     )
-                    # Xây schema JSON từ TypedDict annotations
-                    import json as _json
-                    schema_fields = response_schema.__annotations__ if hasattr(response_schema, "__annotations__") else {}
-                    response_format = {
-                        "type": "json_object"
-                    }
+                    refined_prompt = prompt
+                    if "json" not in prompt.lower():
+                        refined_prompt += "\nTrả về kết quả dưới dạng JSON."
+                    response_format = {"type": "json_object"}
                     chat_res = client.chat.completions.create(
                         model=m_name,
-                        messages=[{"role": "user", "content": prompt}],
+                        messages=[{"role": "user", "content": refined_prompt}],
+                        response_format=response_format,
+                        timeout=240
+                    )
+                    result = json.loads(chat_res.choices[0].message.content)
+                else:  # openai_compat
+                    base_url = self.openai_compat_base_url.get().strip()
+                    client = OpenAI(
+                        api_key=self.openai_compat_api_key.get().strip(),
+                        base_url=base_url
+                    )
+                    refined_prompt = prompt
+                    if "json" not in prompt.lower():
+                        refined_prompt += "\nTrả về kết quả dưới dạng JSON."
+                    response_format = {"type": "json_object"}
+                    chat_res = client.chat.completions.create(
+                        model=m_name,
+                        messages=[{"role": "user", "content": refined_prompt}],
                         response_format=response_format,
                         timeout=240
                     )
@@ -650,12 +704,14 @@ class BienMucApp:
 
             if provider == "gemini":
                 genai.configure(api_key=self.api_key.get().strip())
-            # Mistral dùng OpenAI client, không cần configure global
+            # Mistral và OpenAI-compatible dùng OpenAI client, không cần configure global
 
             if provider == "gemini":
                 model_name = self.model_name.get().strip()
-            else:
+            elif provider == "mistral":
                 model_name = self.mistral_model_name.get().strip()
+            else:  # openai_compat
+                model_name = self.openai_compat_model_name.get().strip()
             
             # Lấy mã bản tin từ giao diện
             a090_val = self.a090_entry.get().strip()
@@ -778,6 +834,12 @@ Văn bản:
                         self.mistral_model_name.get().strip(),
                         self.mistral_fallback_1.get().strip(),
                         self.mistral_fallback_2.get().strip()
+                    ]
+                elif provider == "openai_compat":
+                    models_to_try = [
+                        self.openai_compat_model_name.get().strip(),
+                        self.openai_compat_fallback_1.get().strip(),
+                        self.openai_compat_fallback_2.get().strip()
                     ]
                 else:
                     models_to_try = [
@@ -977,6 +1039,12 @@ Văn bản:
                         self.mistral_model_name.get().strip(),
                         self.mistral_fallback_1.get().strip(),
                         self.mistral_fallback_2.get().strip()
+                    ]
+                elif provider == "openai_compat":
+                    models_to_try = [
+                        self.openai_compat_model_name.get().strip(),
+                        self.openai_compat_fallback_1.get().strip(),
+                        self.openai_compat_fallback_2.get().strip()
                     ]
                 else:
                     models_to_try = [
