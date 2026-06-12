@@ -12,10 +12,18 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 
 import openpyxl
 from openpyxl.styles import Font, Alignment
-from striprtf.striprtf import rtf_to_text
+from striprtf.striprtf import rtf_to_text as _rtf_to_text_raw
 import google.generativeai as genai
 import typing_extensions as typing
 from openai import OpenAI
+
+def rtf_to_text(rtf_str):
+    """Wrapper: fix ky tu Vietnamese d/D bi sai do RTF CP1252 encoding.
+    Thay the ky tu eth (U+00F0) thanh d-stroke (U+0111) sau khi convert."""
+    result = _rtf_to_text_raw(rtf_str)
+    result = result.replace('\u00f0', 'đ')  # ð → đ
+    result = result.replace('\u00d0', 'Đ')  # Ð → Đ
+    return result
 
 def apply_tnr_font(ws):
     tnr_font = Font(name='Times New Roman', size=11)
@@ -284,9 +292,10 @@ class BienMucApp:
         d = filedialog.askdirectory(title="Chọn thư mục Output")
         if d: self.output_dir.set(d)
 
-    def log(self, message):
+    def log(self, message, to_gui=True):
         logging.info(message)
-        self.root.after(0, self._append_log, message)
+        if to_gui:
+            self.root.after(0, self._append_log, message)
 
     def _append_log(self, message):
         self.txt_log.config(state="normal")
@@ -613,9 +622,10 @@ class BienMucApp:
         # Trích xuất nội dung
         content_lines = []
         for p in content_paras[:last_content_idx + 1]:
-            # Với LIVE: bỏ qua chữ xanh lá không in đậm
+            # Với LIVE: bỏ qua chữ xanh lá không in đậm, NGOẠI TRỪ dòng viết HOA (phụ đề)
             if is_live and p['has_green'] and not p['is_bold']:
-                continue
+                if not (p['text'].isupper() and len(p['text']) > 3):
+                    continue
             # Bỏ dòng trùng tiêu đề
             if p['text'].strip().lower() == title.strip().lower():
                 continue
@@ -779,7 +789,7 @@ class BienMucApp:
                                 pass
 
             # 2. Xử lý LIST bằng thuật toán nội bộ thay vì AI
-            self.log("Bóc tách danh sách tin chính từ file LIST (sử dụng thuật toán nội bộ thay vì AI để tránh lỗi 504 Timeout)...")
+            self.log("Bóc tách danh sách tin chính từ file LIST (sử dụng thuật toán nội bộ thay vì AI để tránh lỗi 504 Timeout)...", to_gui=False)
             danh_sach_tin = []
             ngay_phat = ""
             
@@ -818,7 +828,7 @@ class BienMucApp:
             ekip_file = os.path.join(input_d, "NHUNG NGUOI THUC HIEN.rtf")
             crew_data = {}
             if os.path.exists(ekip_file):
-                self.log("Bóc tách thông tin ê-kíp sản xuất từ NHUNG NGUOI THUC HIEN.rtf...")
+                self.log("Bóc tách thông tin ê-kíp sản xuất từ NHUNG NGUOI THUC HIEN.rtf...", to_gui=False)
                 with open(ekip_file, 'rb') as f:
                     rtf_raw = f.read().decode('utf-8', errors='replace')
                 ekip_text = rtf_to_text(rtf_raw)
@@ -851,7 +861,7 @@ Văn bản:
 
                 try:
                     crew_data = self._call_ai(prompt_crew, CrewList, models_to_try)
-                    self.log("  ✓ Bóc tách ê-kíp thành công.")
+                    self.log("  ✓ Bóc tách ê-kíp thành công.", to_gui=False)
                 except Exception as e:
                     self.log(f"  ⚠ CẢNH BÁO: Tất cả các model đều thất bại khi bóc tách ê-kíp: {e}")
                     crew_data = {k: "" for k in ["chiu_trach_nhiem", "bien_tap", "bien_dich", "hien_dan", "dao_dien", "ky_thuat", "trang_diem"]}
@@ -871,7 +881,7 @@ Văn bản:
             # Kiểm tra xem có trường nào bị rỗng không
             missing_keys = [k for k in ["chiu_trach_nhiem", "bien_tap", "bien_dich", "hien_dan", "dao_dien", "ky_thuat"] if not crew_data.get(k, "").strip()]
             if missing_keys:
-                self.log("Một số chức danh còn thiếu tên — đang tìm file RTF tiền tố bổ sung...")
+                self.log("Một số chức danh còn thiếu tên — đang tìm file RTF tiền tố bổ sung...", to_gui=False)
                 for fname in os.listdir(input_d):
                     if not fname.endswith(".rtf"):
                         continue
@@ -881,23 +891,23 @@ Văn bản:
                             name_part = re.sub(r"\s*,\s*", " - ", name_part)
                             crew_data[field_key] = name_part.upper()
                             missing_keys.remove(field_key)
-                            self.log(f"  Bổ sung từ '{fname}': {field_key} = {crew_data[field_key]}")
+                            self.log(f"  Bổ sung từ '{fname}': {field_key} = {crew_data[field_key]}", to_gui=False)
                             break
 
             # Bóc tách ê-kíp sản xuất bằng thuật toán nội bộ (không AI)
             crew_data_internal = {k: "" for k in ["chiu_trach_nhiem", "bien_tap", "bien_dich", "hien_dan", "dao_dien", "ky_thuat", "trang_diem"]}
             if os.path.exists(ekip_file):
-                self.log("Bóc tách thông tin ê-kíp sản xuất bằng thuật toán nội bộ...")
+                self.log("Bóc tách thông tin ê-kíp sản xuất bằng thuật toán nội bộ...", to_gui=False)
                 try:
                     crew_data_internal = self._internal_extract_crew(ekip_text)
-                    self.log("  ✓ Bóc tách ê-kíp bằng thuật toán nội bộ thành công.")
+                    self.log("  ✓ Bóc tách ê-kíp bằng thuật toán nội bộ thành công.", to_gui=False)
                 except Exception as e:
                     self.log(f"  ⚠ Lỗi khi bóc tách ê-kíp bằng thuật toán nội bộ: {e}")
 
             # Fallback cho ê-kíp nội bộ
             missing_keys_internal = [k for k in ["chiu_trach_nhiem", "bien_tap", "bien_dich", "hien_dan", "dao_dien", "ky_thuat"] if not crew_data_internal.get(k, "").strip()]
             if missing_keys_internal:
-                self.log("Một số chức danh nội bộ còn thiếu tên — đang tìm file RTF tiền tố bổ sung...")
+                self.log("Một số chức danh nội bộ còn thiếu tên — đang tìm file RTF tiền tố bổ sung...", to_gui=False)
                 for fname in os.listdir(input_d):
                     if not fname.endswith(".rtf"):
                         continue
@@ -907,11 +917,13 @@ Văn bản:
                             name_part = re.sub(r"\s*,\s*", " - ", name_part)
                             crew_data_internal[field_key] = name_part.upper()
                             missing_keys_internal.remove(field_key)
-                            self.log(f"  Bổ sung (nội bộ) từ '{fname}': {field_key} = {crew_data_internal[field_key]}")
+                            self.log(f"  Bổ sung (nội bộ) từ '{fname}': {field_key} = {crew_data_internal[field_key]}", to_gui=False)
                             break
 
+            self.log("Đã bóc tách xong ê-kíp sản xuất")
+
             # 4. Parse từng file RTF tin chính
-            self.log("Bắt đầu bóc tách nội dung chi tiết từng file kịch bản (RTF)...")
+            self.log("Bắt đầu bóc tách nội dung chi tiết từng file kịch bản (RTF)...", to_gui=False)
             chi_tiet_tin = [] # Chứa dict: id, a245, a500, a520_list
 
             total_tin = len(danh_sach_tin)
@@ -939,7 +951,7 @@ Văn bản:
                     chi_tiet_tin.append({"id": id_tin, "tieu_de": ten_tin.upper(), "nguoi_bien_dich": "", "noi_dung": []})
                     continue
 
-                self.log(f"Đang bóc tách: {os.path.basename(rtf_path)}...")
+                self.log(f"Đang bóc tách: {os.path.basename(rtf_path)}...", to_gui=False)
                 with open(rtf_path, 'rb') as f:
                     rtf_raw = f.read().decode('utf-8', errors='replace')
 
@@ -980,7 +992,7 @@ Văn bản:
                                 tieu_de_tu_dinh_dang = txt
                                 break
                     if tieu_de_tu_dinh_dang:
-                        self.log(f"  ✓ Tìm thấy tiêu đề định dạng: '{tieu_de_tu_dinh_dang}'")
+                        self.log(f"  ✓ Tìm thấy tiêu đề định dạng: '{tieu_de_tu_dinh_dang}'", to_gui=False)
                 except Exception as e:
                     self.log(f"  ⚠ Lỗi khi trích xuất tiêu đề theo định dạng: {e}")
 
@@ -1001,12 +1013,16 @@ Văn bản:
                             has_green = green_tag in p_clean
                             is_bold = r'\b' in p_clean and (r'\b0' not in p_clean or p_clean.index(r'\b') < p_clean.index(r'\b0'))
 
-                            if has_green and not is_bold:
-                                continue
-
                             rtf_wrapped = rtf_header + p_clean + r"}"
                             txt = rtf_to_text(rtf_wrapped).strip()
                             txt = re.sub(r'\s+', ' ', txt)
+
+                            # Với LIVE: bỏ green non-bold, NGOẠI TRỪ dòng viết HOA
+                            # (dòng HOA là phụ đề/subtitle, cần giữ lại)
+                            if has_green and not is_bold:
+                                if not (txt and txt.isupper() and len(txt) > 3):
+                                    continue
+
                             if txt:
                                 filtered_paragraphs.append(txt)
                         news_text = '\n'.join(filtered_paragraphs)
@@ -1061,11 +1077,12 @@ Văn bản:
                     news_parsed = self._call_ai(prompt_news, RtfParseResult, models_to_try)
                     if news_parsed.get("noi_dung") and len(news_parsed["noi_dung"]) > 0:
                         success_news = True
-                        self.log(f"  ✓ Bóc tách thành công.")
+                        self.log(f"  ✓ Bóc tách thành công.", to_gui=False)
+                        self.log(f"Bóc tách thành công {os.path.basename(rtf_path)}")
                     else:
-                        self.log(f"  ⚠ AI trả về noi_dung rỗng cho {os.path.basename(rtf_path)}.")
+                        self.log(f"  ⚠ AI trả về noi_dung rỗng cho {os.path.basename(rtf_path)}.", to_gui=False)
                 except Exception as ex:
-                    self.log(f"  ⚠ Tất cả model thất bại cho {os.path.basename(rtf_path)}: {ex}")
+                    self.log(f"  ⚠ Tất cả model thất bại cho {os.path.basename(rtf_path)}: {ex}", to_gui=False)
                 
                 tieu_de_ai = tieu_de_tu_dinh_dang if tieu_de_tu_dinh_dang else news_parsed.get("tieu_de", "").strip()
                 noi_dung_parsed = news_parsed.get("noi_dung", [])
@@ -1082,7 +1099,7 @@ Văn bản:
                 # tự trích xuất toàn bộ văn bản phía dưới tiêu đề
                 if not noi_dung_parsed:
                     self.log(f"  ⚠ CẢNH BÁO: AI không trả về nội dung cho '{os.path.basename(rtf_path)}' sau 3 lần thử.")
-                    self.log(f"  → Chuyển sang trích xuất nội dung bằng thuật toán nội bộ (không dùng AI)...")
+                    self.log(f"  → Chuyển sang trích xuất nội dung bằng thuật toán nội bộ (không dùng AI)...", to_gui=False)
                     all_lines = [l.strip() for l in news_text.split('\n')]
                     # Tìm vị trí tiêu đề trong văn bản
                     title_idx = -1
@@ -1104,7 +1121,8 @@ Văn bản:
                         content_lines = all_lines  # Không tìm được tiêu đề → lấy toàn bộ
                     # Lọc bỏ dòng trống và dòng quá ngắn (<=2 ký tự)
                     noi_dung_parsed = [l for l in content_lines if len(l) > 2]
-                    self.log(f"  ✓ Đã trích xuất được {len(noi_dung_parsed)} đoạn nội dung bằng thuật toán nội bộ.")
+                    self.log(f"  ✓ Đã trích xuất được {len(noi_dung_parsed)} đoạn nội dung bằng thuật toán nội bộ.", to_gui=False)
+                    self.log(f"Bóc tách bằng thuật toán nội bộ {os.path.basename(rtf_path)}")
 
                 # --- Bóc tách nội bộ (không AI) để so sánh cho Map_ChiTiet ---
                 internal_title, internal_translator, internal_content = self._internal_extract_content(rtf_raw, is_live_feed)
@@ -1122,7 +1140,7 @@ Văn bản:
                 self.set_progress(20 + (idx + 1) / total_tin * 50) # Cập nhật progress 20 -> 70%
 
             # 5. Sinh Output 1: Import_SoLuoc
-            self.log("Đang tạo file Output 1: Import_SoLuoc...")
+            self.log("Đang tạo file Output 1: Import_SoLuoc...", to_gui=False)
             wb1 = openpyxl.Workbook()
             ws1 = wb1.active
             ws1.title = "Sheet1"
@@ -1166,7 +1184,7 @@ Văn bản:
             wb1.save(fn1)
 
             # 5b. Sinh Output 1 Thuật Toán: Import_SoLuoc_TG24H_thuattoan (lưu vào tempbienmuc)
-            self.log("Đang tạo file Import_SoLuoc_TG24H_thuattoan...")
+            self.log("Đang tạo file Import_SoLuoc_TG24H_thuattoan...", to_gui=False)
             wb1_tt = openpyxl.Workbook()
             ws1_tt = wb1_tt.active
             ws1_tt.title = "Sheet1"
@@ -1203,11 +1221,11 @@ Văn bản:
             apply_tnr_font(ws1_tt)
             fn1_tt = os.path.join(temp_d, f"Import_SoLuoc_TG24H_thuattoan_{ngay_phat}.xlsx")
             wb1_tt.save(fn1_tt)
-            self.log(f"  ✓ Đã tạo file: {os.path.basename(fn1_tt)}")
+            self.log(f"  ✓ Đã tạo file: {os.path.basename(fn1_tt)}", to_gui=False)
 
             # 6. Sinh Output 2: Map_BanTinTG
             self.set_progress(75)
-            self.log("Đang tạo file Output 2: Map_BanTinTG...")
+            self.log("Đang tạo file Output 2: Map_BanTinTG...", to_gui=False)
             wb2 = openpyxl.Workbook()
             ws2 = wb2.active
             ws2.title = "Sheet1"
@@ -1253,7 +1271,7 @@ Văn bản:
             wb2.save(fn2)
 
             # 6b. Sinh Output 2 Thuật Toán: Map_BanTinTG_24G_thuattoan (lưu vào tempbienmuc)
-            self.log("Đang tạo file Map_BanTinTG_24G_thuattoan...")
+            self.log("Đang tạo file Map_BanTinTG_24G_thuattoan...", to_gui=False)
             wb2_tt = openpyxl.Workbook()
             ws2_tt = wb2_tt.active
             ws2_tt.title = "Sheet1"
@@ -1295,11 +1313,11 @@ Văn bản:
             apply_tnr_font(ws2_tt)
             fn2_tt = os.path.join(temp_d, f"Map_BanTinTG_24G_thuattoan_{ngay_phat}.xlsx")
             wb2_tt.save(fn2_tt)
-            self.log(f"  ✓ Đã tạo file: {os.path.basename(fn2_tt)}")
+            self.log(f"  ✓ Đã tạo file: {os.path.basename(fn2_tt)}", to_gui=False)
 
             # 7. Sinh Output 3: Map_ChiTiet (AI)
             self.set_progress(80)
-            self.log("Đang tạo file Output 3: Map_ChiTiet (AI)...")
+            self.log("Đang tạo file Output 3: Map_ChiTiet (AI)...", to_gui=False)
             wb3 = openpyxl.Workbook()
             ws3 = wb3.active
             ws3.title = "24G"
@@ -1338,7 +1356,7 @@ Văn bản:
 
             # 8. Sinh Output 4: Map_ChiTiet_ThuatToan (hoàn toàn từ thuật toán nội bộ)
             self.set_progress(90)
-            self.log("Đang tạo file Output 4: Map_ChiTiet_ThuatToan (thuật toán nội bộ)...")
+            self.log("Đang tạo file Output 4: Map_ChiTiet_ThuatToan (thuật toán nội bộ)...", to_gui=False)
             wb4 = openpyxl.Workbook()
             ws4 = wb4.active
             ws4.title = "24G"
@@ -1375,7 +1393,8 @@ Văn bản:
             apply_tnr_font(ws4)
             fn4 = os.path.join(temp_d, f"Map_ChiTiet_ThuatToan_{ngay_phat}.xlsx")
             wb4.save(fn4)
-            self.log(f"  ✓ Đã tạo file: {os.path.basename(fn4)}")
+            self.log(f"  ✓ Đã tạo file: {os.path.basename(fn4)}", to_gui=False)
+            self.log("Đã hoàn thành tạo file")
 
             # --- So sánh SỐ DÒNG mỗi tin giữa Map_ChiTiet (AI) và Map_ChiTiet_ThuatToan ---
             discrepancies = []
