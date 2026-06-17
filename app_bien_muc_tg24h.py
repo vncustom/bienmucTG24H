@@ -270,7 +270,7 @@ class BienMucApp:
         frame_note.pack(fill="x", padx=10, pady=5)
         note_text = (
             "• File LIST (Excel): Bắt đầu bằng 'BTTG24H_' (.xlsx).\n"
-            "   Cột A: Tên file ('24H-' hoặc 'GAT24H-'), Cột C: ID.\n"
+            "   Cột A: Tên file bắt đầu bằng '24H-', '24h-', '24 ', 'GAT24H' hoặc 'GAT24h'; Cột C: ID 9 số; Cột D: ONLINE hoặc PLAYED.\n"
             ".\n"
         )
         ttk.Label(frame_note, text=note_text, justify="left", font=("Arial", 9)).pack(anchor="w")
@@ -792,11 +792,32 @@ class BienMucApp:
             self.log("Bóc tách danh sách tin chính từ file LIST (sử dụng thuật toán nội bộ thay vì AI để tránh lỗi 504 Timeout)...", to_gui=False)
             danh_sach_tin = []
             ngay_phat = ""
+            rtf_files = [f for f in os.listdir(input_d) if f.lower().endswith(".rtf")]
+
+            def find_matching_rtf(news_name):
+                safe_news_name = news_name.replace("/", "").lower()
+                if not safe_news_name:
+                    return None
+
+                for fname in rtf_files:
+                    if safe_news_name in fname.replace("/", "").lower():
+                        return fname
+
+                normalized_news_name = re.sub(r"[^a-z0-9]+", "", safe_news_name)
+                if not normalized_news_name:
+                    return None
+
+                for fname in rtf_files:
+                    normalized_fname = re.sub(r"[^a-z0-9]+", "", os.path.splitext(fname)[0].lower())
+                    if normalized_news_name in normalized_fname or normalized_fname in normalized_news_name:
+                        return fname
+
+                return None
             
             for row_idx, row in enumerate(ws_list.iter_rows(values_only=False), start=1):
                 val_a = str(row[0].value).strip() if row[0].value else ""
                 val_c = str(row[2].value).strip() if row[2].value else ""
-                val_d = str(row[3].value).strip() if row[3].value else ""
+                val_d = str(row[3].value).strip().upper() if row[3].value else ""
                 
                 if row_idx <= 5 and not ngay_phat:
                     for cell in row:
@@ -807,7 +828,22 @@ class BienMucApp:
                             ngay_phat = f"{y}{m.zfill(2)}{d.zfill(2)}"
                             break
                             
-                if (val_a.startswith("24H-") or val_a.startswith("GAT24H-")) and val_d == "ONLINE" and len(val_c) == 9 and val_c.isdigit():
+                has_video_id = len(val_c) == 9 and val_c.isdigit()
+                val_a_upper = val_a.upper()
+                col_a_main_news = val_a_upper.startswith(("24H-", "24H ", "24 ", "GAT24H"))
+                legacy_online_news = (
+                    col_a_main_news
+                    and val_d == "ONLINE"
+                )
+                matched_rtf = find_matching_rtf(val_a)
+                played_rtf_24_news = (
+                    col_a_main_news
+                    and val_d == "PLAYED"
+                    and matched_rtf is not None
+                    and "24" in matched_rtf
+                )
+
+                if has_video_id and (legacy_online_news or played_rtf_24_news):
                     danh_sach_tin.append({
                         "id": val_c,
                         "ten_file": val_a,
@@ -1343,26 +1379,35 @@ Văn bản:
             # Đếm số dòng mỗi tin trong file AI
             ai_line_counts = {}
 
+            def filter_detail_lines(lines, title):
+                clean_title = title.strip().lower() if title else ""
+                filtered = []
+                for line in lines:
+                    line_text = str(line).strip()
+                    if clean_title and line_text.lower() == clean_title:
+                        continue
+                    filtered.append(line)
+
+                if filtered and len(str(filtered[0]).strip()) < 15:
+                    filtered = filtered[1:]
+
+                return filtered
+
             for idx, ct in enumerate(chi_tiet_tin):
                 id_tin = ct["id"]
                 is_live = ct.get("is_live", False)
                 if is_live:
                     nguoi_bd = ct.get("internal_translator", "")
                     nd_list = ct.get("internal_content", [])
-                    clean_title = ct.get("internal_title", "").strip().lower() if ct.get("internal_title") else ""
+                    title_for_filter = ct.get("internal_title", "")
                 else:
                     nguoi_bd = ct["nguoi_bien_dich"]
                     nd_list = ct["noi_dung"]
-                    clean_title = ct["tieu_de"].strip().lower() if ct.get("tieu_de") else ""
+                    title_for_filter = ct.get("tieu_de", "")
                 
                 val_a500_first = f"Biên dịch: {nguoi_bd}" if nguoi_bd else ""
                 
-                # Loại bỏ dòng trùng với tiêu đề chính (tieu_de)
-                filtered_nd = []
-                for line in nd_list:
-                    if clean_title and line.strip().lower() == clean_title:
-                        continue
-                    filtered_nd.append(line)
+                filtered_nd = filter_detail_lines(nd_list, title_for_filter)
 
                 if not filtered_nd:
                     ws3.append([id_tin, val_a500_first, ""])
@@ -1396,13 +1441,7 @@ Văn bản:
                 
                 val_a500_first = f"Biên dịch: {nguoi_bd}" if nguoi_bd else ""
                 
-                # Loại bỏ dòng trùng với tiêu đề nội bộ
-                filtered_int = []
-                clean_int_title = int_title.strip().lower() if int_title else ""
-                for line in int_content:
-                    if clean_int_title and line.strip().lower() == clean_int_title:
-                        continue
-                    filtered_int.append(line)
+                filtered_int = filter_detail_lines(int_content, int_title)
 
                 if not filtered_int:
                     ws4.append([id_tin, val_a500_first, ""])
