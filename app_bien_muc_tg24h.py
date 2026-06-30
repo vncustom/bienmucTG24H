@@ -36,6 +36,36 @@ def apply_tnr_font(ws):
     ws.column_dimensions['C'].width = 30
 
 
+def is_valid_video_id(value) -> bool:
+    """Column C is valid when it is not empty and starts with a digit."""
+    value = str(value).strip() if value is not None else ""
+    return bool(value) and value[0].isdigit()
+
+
+def is_main_news_name(value) -> bool:
+    value_upper = str(value).strip().upper() if value is not None else ""
+    return value_upper.startswith(("24H-", "24H ", "24 ", "GAT24H", "GAT "))
+
+
+def should_include_news_row(file_name, video_id, _status=None) -> bool:
+    return is_main_news_name(file_name) and is_valid_video_id(video_id)
+
+
+def find_crew_rtf_file(file_names):
+    crew_base_name = "nhung nguoi thuc hien"
+    rtf_names = [name for name in file_names if name.lower().endswith(".rtf")]
+
+    for name in rtf_names:
+        if os.path.splitext(name)[0].lower() == crew_base_name:
+            return name
+
+    for name in rtf_names:
+        if crew_base_name in os.path.splitext(name)[0].lower():
+            return name
+
+    return None
+
+
 def get_green_cf_tag(rtf_raw: str) -> str:
     r"""Tìm thẻ colortbl định nghĩa bảng màu trong file RTF và trả về thẻ \cf tương ứng với màu xanh lá cây."""
     match = re.search(r'\{\\colortbl([^}]+)\}', rtf_raw)
@@ -270,7 +300,7 @@ class BienMucApp:
         frame_note.pack(fill="x", padx=10, pady=5)
         note_text = (
             "• File LIST (Excel): Bắt đầu bằng 'BTTG24H_' (.xlsx).\n"
-            "   Cột A: Tên file bắt đầu bằng '24H-', '24h-', '24 ', 'GAT24H' hoặc 'GAT24h'; Cột C: ID 9 số; Cột D: ONLINE hoặc PLAYED.\n"
+            "   Cột A: Tên file bắt đầu bằng '24H-', '24h-', '24 ', 'GAT24H', 'GAT24h' hoặc 'GAT '; Cột C: bắt đầu bằng số; không dùng Cột D.\n"
             ".\n"
         )
         ttk.Label(frame_note, text=note_text, justify="left", font=("Arial", 9)).pack(anchor="w")
@@ -768,7 +798,7 @@ class BienMucApp:
                 # Format time correctly from column F
                 val_c = str(row[2].value).strip() if row[2].value else ""
                 val_f = row[5].value
-                if val_c and len(val_c) == 9:
+                if is_valid_video_id(val_c):
                     if isinstance(val_f, datetime.time):
                         # Excel lưu thời lượng mà thực chất là mm:ss dưới dạng HH:MM
                         # (ví dụ 01:08 = 1 phút 8 giây → datetime.time(1, 8, 0))
@@ -792,32 +822,10 @@ class BienMucApp:
             self.log("Bóc tách danh sách tin chính từ file LIST (sử dụng thuật toán nội bộ thay vì AI để tránh lỗi 504 Timeout)...", to_gui=False)
             danh_sach_tin = []
             ngay_phat = ""
-            rtf_files = [f for f in os.listdir(input_d) if f.lower().endswith(".rtf")]
 
-            def find_matching_rtf(news_name):
-                safe_news_name = news_name.replace("/", "").lower()
-                if not safe_news_name:
-                    return None
-
-                for fname in rtf_files:
-                    if safe_news_name in fname.replace("/", "").lower():
-                        return fname
-
-                normalized_news_name = re.sub(r"[^a-z0-9]+", "", safe_news_name)
-                if not normalized_news_name:
-                    return None
-
-                for fname in rtf_files:
-                    normalized_fname = re.sub(r"[^a-z0-9]+", "", os.path.splitext(fname)[0].lower())
-                    if normalized_news_name in normalized_fname or normalized_fname in normalized_news_name:
-                        return fname
-
-                return None
-            
             for row_idx, row in enumerate(ws_list.iter_rows(values_only=False), start=1):
                 val_a = str(row[0].value).strip() if row[0].value else ""
                 val_c = str(row[2].value).strip() if row[2].value else ""
-                val_d = str(row[3].value).strip().upper() if row[3].value else ""
                 
                 if row_idx <= 5 and not ngay_phat:
                     for cell in row:
@@ -828,22 +836,7 @@ class BienMucApp:
                             ngay_phat = f"{y}{m.zfill(2)}{d.zfill(2)}"
                             break
                             
-                has_video_id = len(val_c) == 9 and val_c.isdigit()
-                val_a_upper = val_a.upper()
-                col_a_main_news = val_a_upper.startswith(("24H-", "24H ", "24 ", "GAT24H"))
-                legacy_online_news = (
-                    col_a_main_news
-                    and val_d == "ONLINE"
-                )
-                matched_rtf = find_matching_rtf(val_a)
-                played_rtf_24_news = (
-                    col_a_main_news
-                    and val_d == "PLAYED"
-                    and matched_rtf is not None
-                    and "24" in matched_rtf
-                )
-
-                if has_video_id and (legacy_online_news or played_rtf_24_news):
+                if should_include_news_row(val_a, val_c):
                     danh_sach_tin.append({
                         "id": val_c,
                         "ten_file": val_a,
@@ -861,10 +854,11 @@ class BienMucApp:
 
             # 3. Parse NHUNG NGUOI THUC HIEN.rtf
             self.set_progress(20)
-            ekip_file = os.path.join(input_d, "NHUNG NGUOI THUC HIEN.rtf")
+            ekip_file_name = find_crew_rtf_file(os.listdir(input_d))
+            ekip_file = os.path.join(input_d, ekip_file_name) if ekip_file_name else None
             crew_data = {}
-            if os.path.exists(ekip_file):
-                self.log("Bóc tách thông tin ê-kíp sản xuất từ NHUNG NGUOI THUC HIEN.rtf...", to_gui=False)
+            if ekip_file and os.path.exists(ekip_file):
+                self.log(f"Bóc tách thông tin ê-kíp sản xuất từ {ekip_file_name}...", to_gui=False)
                 with open(ekip_file, 'rb') as f:
                     rtf_raw = f.read().decode('utf-8', errors='replace')
                 ekip_text = rtf_to_text(rtf_raw)
@@ -932,7 +926,7 @@ Văn bản:
 
             # Bóc tách ê-kíp sản xuất bằng thuật toán nội bộ (không AI)
             crew_data_internal = {k: "" for k in ["chiu_trach_nhiem", "bien_tap", "bien_dich", "hien_dan", "dao_dien", "ky_thuat", "trang_diem"]}
-            if os.path.exists(ekip_file):
+            if ekip_file and os.path.exists(ekip_file):
                 self.log("Bóc tách thông tin ê-kíp sản xuất bằng thuật toán nội bộ...", to_gui=False)
                 try:
                     crew_data_internal = self._internal_extract_crew(ekip_text)

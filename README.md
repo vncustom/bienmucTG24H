@@ -52,21 +52,22 @@ Nhấn nút **⚙ Cài đặt API** để mở hộp thoại cài đặt:
 ```
 input/
 ├── BTTG24H_YYYYMMDD.xlsx        ← File danh sách bản tin (LIST) - BẮT BUỘC
-├── NHUNG NGUOI THUC HIEN.rtf    ← File ê-kíp sản xuất (Bắt buộc hoặc dùng file tiền tố)
-├── BGĐ MÃ CHÍ THÔNG.rtf         ← File ê-kíp bổ sung nếu NHUNG NGUOI THUC HIEN.rtf bị thiếu
+├── NHUNG NGUOI THUC HIEN*.rtf   ← File ê-kíp sản xuất (Bắt buộc hoặc dùng file tiền tố)
+├── BGĐ MÃ CHÍ THÔNG.rtf         ← File ê-kíp bổ sung nếu file NHUNG NGUOI THUC HIEN*.rtf bị thiếu
 ├── BT KIM NGÂN, THẢO TRANG.rtf  ← File biên tập bổ sung (nếu có nhiều tên, cách bởi dấu phẩy)
 ├── 24H-TenTin.rtf               ← Kịch bản bản tin chính
 ├── GAT24H-TenTin.rtf            ← Kịch bản tin gạt
+├── GAT TenTin.rtf               ← Kịch bản tin gạt
 └── ...
 ```
 
 - **File LIST (Excel)**: Tên file bắt đầu bằng `BTTG24H_YYYYMMDD.xlsx`. 
   - Dữ liệu được đọc từ **Active Sheet** (Sheet đang hoạt động).
-  - Cột A phải chứa tên file bắt đầu bằng `24H-` hoặc `GAT24H-`.
-  - Cột C là ID bản tin gồm **9 chữ số**.
-  - Cột D ghi chữ `ONLINE`.
+  - Cột A phải chứa tên file bắt đầu bằng `24H-`, `24h-`, `24 `, `GAT24H`, `GAT24h` hoặc `GAT `.
+  - Cột C là ID bản tin và phải **bắt đầu bằng số**. Ví dụ `260611056` và `260611056a` hợp lệ; dòng trống hoặc `qc123` không hợp lệ.
+  - Cột D không dùng để bắt tin.
   - Cột F chứa thời lượng phát sóng.
-- **File Ê-kíp**: File `NHUNG NGUOI THUC HIEN.rtf`. Nếu chức danh nào thiếu tên, app sẽ tự tìm các file RTF có tiền tố tương ứng (`BGĐ `, `BT `, `BD `, `MC `, `ĐD `, `KT `) trong folder để điền vào. Nếu một chức danh có từ 2 tên trở lên, các tên sẽ tự động được viết hoa và nối bằng dấu gạch ngang (` - `).
+- **File Ê-kíp**: File `.rtf` có tên chứa `NHUNG NGUOI THUC HIEN`, ví dụ `NHUNG NGUOI THUC HIEN.rtf` hoặc `NHUNG NGUOI THUC HIEN abc.rtf`. Nếu chức danh nào thiếu tên, app sẽ tự tìm các file RTF có tiền tố tương ứng (`BGĐ `, `BT `, `BD `, `MC `, `ĐD `, `KT `) trong folder để điền vào. Nếu một chức danh có từ 2 tên trở lên, các tên sẽ tự động được viết hoa và nối bằng dấu gạch ngang (` - `).
 - **Quy tắc nhận diện Tiêu đề**: Tiêu đề chính là dòng chữ đầu tiên trong văn bản RTF thỏa mãn đồng thời:
   1. Được in đậm (`\b`).
   2. Được viết in HOA (`isupper()`).
