@@ -69,12 +69,14 @@ input/
   - Cột D không dùng để bắt tin.
   - Cột F chứa thời lượng phát sóng.
 - **File Ê-kíp**: File `.rtf` có tên chứa `NHUNG NGUOI THUC HIEN`, ví dụ `NHUNG NGUOI THUC HIEN.rtf` hoặc `NHUNG NGUOI THUC HIEN abc.rtf`. Nếu chức danh nào thiếu tên, app sẽ tự tìm các file RTF có tiền tố tương ứng (`BGĐ `, `BT `, `BD `, `MC `, `ĐD `, `KT `) trong folder để điền vào. Nếu một chức danh có từ 2 tên trở lên, các tên sẽ tự động được viết hoa và nối bằng dấu gạch ngang (` - `).
-- **Quy tắc nhận diện Tiêu đề**: Tiêu đề chính là dòng đầu tiên trong phần đầu kịch bản thỏa mãn đồng thời:
-  1. Được viết IN HOA toàn bộ (`isupper()`).
-  2. Được in đậm (BOLD).
-  3. Dài hơn 16 ký tự.
-  4. Không bắt đầu bằng `AFP`, `AP` hoặc `REUTERS`.
-  5. Không phải nhãn phân loại như `GẠT TG24H`, `GAT24H` hoặc `HEADLINES`.
+- **Quy tắc nhận diện Tiêu đề**: Tiêu đề chính được xác định theo thứ tự ưu tiên:
+  - Ưu tiên dòng đầu tiên trong phần đầu kịch bản thỏa mãn đồng thời:
+    1. Được viết IN HOA toàn bộ (`isupper()`).
+    2. Được in đậm (BOLD).
+    3. Dài hơn 16 ký tự.
+    4. Không bắt đầu bằng `AFP`, `AP` hoặc `REUTERS`.
+    5. Không phải nhãn phân loại như `GẠT TG24H`, `GAT24H` hoặc `HEADLINES`.
+  - Nếu không có dòng IN HOA BOLD hợp lệ, app lấy dòng đầu tiên trong phần đầu kịch bản được viết IN HOA toàn bộ, dài hơn 16 ký tự, không bắt đầu bằng `AFP`, `AP`, `REUTERS`, và không phải nhãn gạt/headlines.
   - Quy tắc này được áp dụng cho cả kết quả AI, fallback và thuật toán nội bộ.
 - **File Kịch bản tin (.rtf)**: Tên file cần chứa hoặc khớp với tên file định nghĩa trong cột A của file Excel LIST.
 
@@ -111,7 +113,7 @@ Thư mục này nằm cùng cấp với thư mục `input` và được tự đ�
 - **Fallback**: Nếu thiếu chức danh nào, tự động dò tìm các file RTF phụ có tiền tố tương ứng (`BGĐ `, `BT `, `BD `, `MC `, `ĐD `, `KT `) để lấy tên người thực hiện từ tên file.
 
 ### 2. Thuật toán bóc tách Tiêu đề, Biên dịch và Nội dung tin
-- **Tiêu đề**: Dòng đầu tiên trong phần đầu kịch bản được viết IN HOA toàn bộ, in đậm (BOLD), dài hơn 16 ký tự, không bắt đầu bằng `AFP`, `AP`, `REUTERS`, và không phải nhãn gạt/headlines.
+- **Tiêu đề**: Ưu tiên dòng đầu tiên trong phần đầu kịch bản được viết IN HOA toàn bộ, in đậm (BOLD), dài hơn 16 ký tự, không bắt đầu bằng `AFP`, `AP`, `REUTERS`, và không phải nhãn gạt/headlines. Nếu không có dòng BOLD hợp lệ, fallback sang dòng IN HOA đầu tiên dài hơn 16 ký tự trong phần đầu kịch bản với cùng điều kiện loại trừ.
 - **Biên dịch**: Dòng chữ không chứa chữ số hoặc các từ khóa của metadata nằm ngay trước dòng tiêu đề trong phạm vi 7 dòng.
 - **Nội dung tin**: Lọc bỏ các dòng nhiễu (dòng separator `==`, tên tiếng Anh, link hình/video, ngày tháng).
   - Với tin thường: Lấy từ dưới tiêu đề đến chữ **màu đen cuối cùng**.

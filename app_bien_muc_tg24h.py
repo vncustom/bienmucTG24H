@@ -76,9 +76,11 @@ def is_uppercase_text(value: str) -> bool:
     return bool(text) and text.isupper()
 
 
-def is_script_title_candidate(value: str, is_bold: bool = False) -> bool:
+def is_script_title_candidate(value: str, is_bold: bool = False, require_bold: bool = True) -> bool:
     text = str(value).strip()
-    if not is_bold or len(text) <= 16 or not is_uppercase_text(text):
+    if require_bold and not is_bold:
+        return False
+    if len(text) <= 16 or not is_uppercase_text(text):
         return False
     if TITLE_SKIP_PREFIX_RE.match(text):
         return False
@@ -94,6 +96,7 @@ def get_title_candidate_parts(candidate):
 
 def find_first_script_title(candidates, max_head_lines: int = SCRIPT_HEAD_NONEMPTY_LINES) -> str:
     """Return the first all-uppercase title-looking line in the script head."""
+    head_candidates = []
     seen_nonempty = 0
     for candidate in candidates:
         text, is_bold = get_title_candidate_parts(candidate)
@@ -102,8 +105,16 @@ def find_first_script_title(candidates, max_head_lines: int = SCRIPT_HEAD_NONEMP
         if seen_nonempty >= max_head_lines:
             break
         seen_nonempty += 1
-        if is_script_title_candidate(text, is_bold):
+        head_candidates.append((text, is_bold))
+
+    for text, is_bold in head_candidates:
+        if is_script_title_candidate(text, is_bold, require_bold=True):
             return text
+
+    for text, is_bold in head_candidates:
+        if is_script_title_candidate(text, is_bold, require_bold=False):
+            return text
+
     return ""
 
 
@@ -1148,8 +1159,8 @@ Văn bản:
                             in_script_head = head_nonempty_count < SCRIPT_HEAD_NONEMPTY_LINES
                             head_nonempty_count += 1
 
-                            # Phát hiện tiêu đề theo dòng IN HOA đầu tiên ở phần đầu kịch bản
-                            if not found_title and in_script_head and is_script_title_candidate(txt, is_bold):
+                            # Phát hiện tiêu đề đã chốt theo quy tắc ưu tiên BOLD rồi fallback không-BOLD.
+                            if not found_title and in_script_head and tieu_de_tu_dinh_dang and txt == tieu_de_tu_dinh_dang:
                                 found_title = True
 
                             # Phát hiện nội dung đỏ/đen sau tiêu đề
@@ -1182,7 +1193,7 @@ Văn bản:
 
                 prompt_news = f"""
 Trích xuất thông tin từ kịch bản bản tin sau.
-1. tieu_de: Lấy dòng đầu tiên IN HOA toàn bộ, được in đậm (BOLD), dài hơn 16 ký tự và thuộc phần đầu kịch bản. Bỏ qua dòng bắt đầu bằng AFP, AP, REUTERS; bỏ qua dòng chữ 'GẠT TG24H' và 'HEADLINES'. Bắt buộc phải trích xuất được tiêu đề.
+1. tieu_de: Ưu tiên lấy dòng đầu tiên IN HOA toàn bộ, được in đậm (BOLD), dài hơn 16 ký tự và thuộc phần đầu kịch bản. Nếu không có dòng IN HOA BOLD hợp lệ, lấy dòng đầu tiên IN HOA toàn bộ, dài hơn 16 ký tự và thuộc phần đầu kịch bản. Bỏ qua dòng bắt đầu bằng AFP, AP, REUTERS; bỏ qua dòng chữ 'GẠT TG24H' và 'HEADLINES'. Bắt buộc phải trích xuất được tiêu đề.
 2. nguoi_bien_dich: Tên người biên dịch bản tin (tên người Việt), thường nằm trước tiêu đề chính. Nếu không có hoặc không rõ thì để chuỗi rỗng "", TUYỆT ĐỐI KHÔNG tự bịa ra tên.
 3. noi_dung: Danh sách các đoạn văn bản cấu thành nội dung tin. Bao gồm các dòng phụ đề viết HOA và các đoạn lời đọc. Bỏ qua các dòng mã hình/video, bỏ qua ngày tháng. Giữ nguyên format viết hoa của phụ đề. Nếu gặp 3 dòng IN HOA liên tục theo mẫu PB[số thứ tự], IN HOA 1, IN HOA 2 thì bỏ dòng PB[số thứ tự] và gộp 2 dòng sau thành "IN HOA 1 - IN HOA 2". Mỗi đoạn/câu là một phần tử trong mảng.
 
