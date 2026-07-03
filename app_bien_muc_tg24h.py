@@ -66,6 +66,86 @@ def find_crew_rtf_file(file_names):
     return None
 
 
+TITLE_SKIP_KEYWORDS = ("GẠT TG", "GAT TG", "GAT24", "GẠT24", "HEADLINES")
+TITLE_SKIP_PREFIX_RE = re.compile(r"^(AFP|AP|REUTERS)\b", re.IGNORECASE)
+SCRIPT_HEAD_NONEMPTY_LINES = 12
+
+
+def is_uppercase_text(value: str) -> bool:
+    text = str(value).strip()
+    return bool(text) and text.isupper()
+
+
+def is_script_title_candidate(value: str, is_bold: bool = False) -> bool:
+    text = str(value).strip()
+    if not is_bold or len(text) <= 16 or not is_uppercase_text(text):
+        return False
+    if TITLE_SKIP_PREFIX_RE.match(text):
+        return False
+    text_upper = text.upper()
+    return not any(keyword in text_upper for keyword in TITLE_SKIP_KEYWORDS)
+
+
+def get_title_candidate_parts(candidate):
+    if isinstance(candidate, dict):
+        return str(candidate.get("text", "")).strip(), bool(candidate.get("is_bold"))
+    return str(candidate).strip(), False
+
+
+def find_first_script_title(candidates, max_head_lines: int = SCRIPT_HEAD_NONEMPTY_LINES) -> str:
+    """Return the first all-uppercase title-looking line in the script head."""
+    seen_nonempty = 0
+    for candidate in candidates:
+        text, is_bold = get_title_candidate_parts(candidate)
+        if not text:
+            continue
+        if seen_nonempty >= max_head_lines:
+            break
+        seen_nonempty += 1
+        if is_script_title_candidate(text, is_bold):
+            return text
+    return ""
+
+
+def normalize_detail_lines_for_map(lines, title: str):
+    clean_title = title.strip().lower() if title else ""
+    filtered = []
+    for line in lines:
+        line_text = str(line).strip()
+        if clean_title and line_text.lower() == clean_title:
+            continue
+        filtered.append(line_text)
+
+    if filtered and len(filtered[0]) < 15 and not re.fullmatch(r"PB\d+", filtered[0], flags=re.IGNORECASE):
+        filtered = filtered[1:]
+
+    normalized = []
+    i = 0
+    while i < len(filtered):
+        current = filtered[i]
+        if (
+            re.fullmatch(r"PB\d+", current, flags=re.IGNORECASE)
+            and i + 2 < len(filtered)
+            and is_uppercase_text(filtered[i + 1])
+            and is_uppercase_text(filtered[i + 2])
+        ):
+            normalized.append(f"{filtered[i + 1]} - {filtered[i + 2]}")
+            i += 3
+            continue
+        normalized.append(current)
+        i += 1
+
+    return normalized
+
+
+def build_completion_message(output_dir: str) -> str:
+    return f"Đã sinh các file output thành công tại:\n{output_dir}"
+
+
+def open_folder_in_file_manager(folder_path: str):
+    os.startfile(os.path.abspath(folder_path))
+
+
 def get_green_cf_tag(rtf_raw: str) -> str:
     r"""Tìm thẻ colortbl định nghĩa bảng màu trong file RTF và trả về thẻ \cf tương ứng với màu xanh lá cây."""
     match = re.search(r'\{\\colortbl([^}]+)\}', rtf_raw)
@@ -321,6 +401,38 @@ class BienMucApp:
     def browse_output(self):
         d = filedialog.askdirectory(title="Chọn thư mục Output")
         if d: self.output_dir.set(d)
+
+    def show_completion_dialog(self, output_dir):
+        top = tk.Toplevel(self.root)
+        top.title("Thành công")
+        top.resizable(False, False)
+        top.transient(self.root)
+        top.grab_set()
+
+        ttk.Label(
+            top,
+            text=build_completion_message(output_dir),
+            justify="left",
+            padding=(16, 14)
+        ).pack(fill="x")
+
+        button_frame = ttk.Frame(top, padding=(16, 0, 16, 14))
+        button_frame.pack(fill="x")
+
+        def open_output_folder():
+            try:
+                open_folder_in_file_manager(output_dir)
+            except Exception as e:
+                messagebox.showerror("Lỗi", f"Không thể mở thư mục output:\n{e}", parent=top)
+
+        ttk.Button(button_frame, text="OK", command=top.destroy).pack(side="right")
+        ttk.Button(button_frame, text="Open output folder", command=open_output_folder).pack(side="right", padx=(0, 8))
+
+        top.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - top.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - top.winfo_height()) // 2
+        top.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        top.focus_set()
 
     def log(self, message, to_gui=True):
         logging.info(message)
@@ -583,26 +695,12 @@ class BienMucApp:
                     'is_bold': is_bold
                 })
         
-        # Bước 1: Tìm tiêu đề
-        title = ""
+        # Bước 1: Tìm tiêu đề theo dòng IN HOA đầu tiên ở phần đầu kịch bản.
+        title = find_first_script_title(parsed_paras)
         title_para_idx = -1
-        for i, p in enumerate(parsed_paras):
-            if p['has_green'] and p['is_bold'] and p['text'].isupper() and len(p['text']) > 3:
-                txt_upper = p['text'].upper()
-                if any(k in txt_upper for k in ["GẠT TG", "GAT TG", "GAT24", "GẠT24", "HEADLINES"]):
-                    continue
-                title = p['text']
-                title_para_idx = i
-                break
-        
-        if title_para_idx == -1:
-            # Fallback: tìm dòng viết hoa đầu tiên dài > 10
+        if title:
             for i, p in enumerate(parsed_paras):
-                txt_upper = p['text'].upper()
-                if p['text'].isupper() and len(p['text']) > 10:
-                    if any(k in txt_upper for k in ["GẠT TG", "GAT TG", "GAT24", "GẠT24", "HEADLINES"]):
-                        continue
-                    title = p['text']
+                if p['text'].strip() == title:
                     title_para_idx = i
                     break
         
@@ -994,10 +1092,11 @@ Văn bản:
                 green_tag = get_green_cf_tag(rtf_raw)
                 is_live_feed = "live" in ten_tin.lower()
 
-                # Bóc tách tiêu đề theo định dạng: dòng đầu tiên in đậm (\b), in HOA, màu xanh lá cây
+                # Bóc tách tiêu đề: dòng IN HOA đầu tiên, dài > 16 ký tự, thuộc phần đầu kịch bản
                 tieu_de_tu_dinh_dang = ""
                 try:
                     paragraphs = re.split(r'\\par(?![a-zA-Z])', rtf_raw)
+                    title_candidates = []
                     for p_idx, p in enumerate(paragraphs):
                         p_clean = p.strip()
                         if not p_clean:
@@ -1008,23 +1107,17 @@ Văn bản:
                             if pard_idx != -1:
                                 p_clean = p_clean[pard_idx:]
 
-                        is_green = green_tag in p_clean
-                        is_bold = r'\b' in p_clean and (r'\b0' not in p_clean or p_clean.index(r'\b') < p_clean.index(r'\b0'))
-                        if is_green and is_bold:
-                            rtf_wrapped = rtf_header + p_clean + r"}"
-                            txt = rtf_to_text(rtf_wrapped).strip()
-                            txt = re.sub(r'\s+', ' ', txt)
-                            if txt and txt.isupper() and len(txt) > 3:
-                                # Bỏ qua dòng phân cách phân loại như "GẠT TG24H", "HEADLINES"...
-                                txt_upper = txt.upper()
-                                if any(k in txt_upper for k in ["GẠT TG", "GAT TG", "GAT24", "GẠT24", "HEADLINES"]):
-                                    continue
-                                tieu_de_tu_dinh_dang = txt
-                                break
+                        rtf_wrapped = rtf_header + p_clean + r"}"
+                        txt = rtf_to_text(rtf_wrapped).strip()
+                        txt = re.sub(r'\s+', ' ', txt)
+                        if txt:
+                            is_bold = r'\b' in p_clean and (r'\b0' not in p_clean or p_clean.index(r'\b') < p_clean.index(r'\b0'))
+                            title_candidates.append({"text": txt, "is_bold": is_bold})
+                    tieu_de_tu_dinh_dang = find_first_script_title(title_candidates)
                     if tieu_de_tu_dinh_dang:
-                        self.log(f"  ✓ Tìm thấy tiêu đề định dạng: '{tieu_de_tu_dinh_dang}'", to_gui=False)
+                        self.log(f"  ✓ Tìm thấy tiêu đề đầu kịch bản: '{tieu_de_tu_dinh_dang}'", to_gui=False)
                 except Exception as e:
-                    self.log(f"  ⚠ Lỗi khi trích xuất tiêu đề theo định dạng: {e}")
+                    self.log(f"  ⚠ Lỗi khi trích xuất tiêu đề đầu kịch bản: {e}")
 
                 # Bóc tách văn bản thô (có lọc tin LIVE nếu cần)
                 if is_live_feed:
@@ -1033,6 +1126,7 @@ Văn bản:
                         filtered_paragraphs = []
                         found_title = False
                         seen_content_after_title = False
+                        head_nonempty_count = 0
                         for p_idx, p in enumerate(paragraphs):
                             p_clean = p.strip()
                             if not p_clean:
@@ -1051,12 +1145,12 @@ Văn bản:
 
                             if not txt:
                                 continue
+                            in_script_head = head_nonempty_count < SCRIPT_HEAD_NONEMPTY_LINES
+                            head_nonempty_count += 1
 
-                            # Phát hiện tiêu đề: green + bold + HOA
-                            if not found_title and has_green and is_bold and txt.isupper() and len(txt) > 3:
-                                txt_upper = txt.upper()
-                                if not any(k in txt_upper for k in ["GẠT TG", "GAT TG", "GAT24", "GẠT24", "HEADLINES"]):
-                                    found_title = True
+                            # Phát hiện tiêu đề theo dòng IN HOA đầu tiên ở phần đầu kịch bản
+                            if not found_title and in_script_head and is_script_title_candidate(txt, is_bold):
+                                found_title = True
 
                             # Phát hiện nội dung đỏ/đen sau tiêu đề
                             if found_title and not has_green and len(txt) > 2:
@@ -1088,9 +1182,9 @@ Văn bản:
 
                 prompt_news = f"""
 Trích xuất thông tin từ kịch bản bản tin sau.
-1. tieu_de: Tiêu đề bản tin, thường được viết HOA toàn bộ (ví dụ: THIỆT HẠI DO ĐỘNG ĐẤT Ở PHILIPPINES TIẾP TỤC TĂNG). Nó thường nằm ở dòng thứ 1, 3, hoặc 5 của văn bản. Bỏ qua dòng chữ 'GẠT TG24H' và các tiêu đề tiếng Anh. Bắt buộc phải trích xuất được tiêu đề.
+1. tieu_de: Lấy dòng đầu tiên IN HOA toàn bộ, được in đậm (BOLD), dài hơn 16 ký tự và thuộc phần đầu kịch bản. Bỏ qua dòng bắt đầu bằng AFP, AP, REUTERS; bỏ qua dòng chữ 'GẠT TG24H' và 'HEADLINES'. Bắt buộc phải trích xuất được tiêu đề.
 2. nguoi_bien_dich: Tên người biên dịch bản tin (tên người Việt), thường nằm trước tiêu đề chính. Nếu không có hoặc không rõ thì để chuỗi rỗng "", TUYỆT ĐỐI KHÔNG tự bịa ra tên.
-3. noi_dung: Danh sách các đoạn văn bản cấu thành nội dung tin. Bao gồm các dòng phụ đề viết HOA và các đoạn lời đọc. Bỏ qua các dòng mã hình/video, bỏ qua tên tiếng Anh, bỏ qua ngày tháng. Giữ nguyên format viết hoa của phụ đề. Mỗi đoạn/câu là một phần tử trong mảng.
+3. noi_dung: Danh sách các đoạn văn bản cấu thành nội dung tin. Bao gồm các dòng phụ đề viết HOA và các đoạn lời đọc. Bỏ qua các dòng mã hình/video, bỏ qua ngày tháng. Giữ nguyên format viết hoa của phụ đề. Nếu gặp 3 dòng IN HOA liên tục theo mẫu PB[số thứ tự], IN HOA 1, IN HOA 2 thì bỏ dòng PB[số thứ tự] và gộp 2 dòng sau thành "IN HOA 1 - IN HOA 2". Mỗi đoạn/câu là một phần tử trong mảng.
 
 Văn bản:
 {news_text}
@@ -1123,8 +1217,6 @@ Văn bản:
                     news_parsed = self._call_ai(prompt_news, RtfParseResult, models_to_try)
                     if news_parsed.get("noi_dung") and len(news_parsed["noi_dung"]) > 0:
                         success_news = True
-                        self.log(f"  ✓ Bóc tách thành công.", to_gui=False)
-                        self.log(f"Bóc tách thành công {os.path.basename(rtf_path)}")
                     else:
                         self.log(f"  ⚠ AI trả về noi_dung rỗng cho {os.path.basename(rtf_path)}.", to_gui=False)
                 except Exception as ex:
@@ -1134,12 +1226,12 @@ Văn bản:
                 noi_dung_parsed = news_parsed.get("noi_dung", [])
 
                 if not tieu_de_ai:
-                    # Fallback: tìm dòng viết hoa đầu tiên dài hơn 10 ký tự, không chứa GẠT TG24H
-                    for line in news_text.split('\n'):
-                        line = line.strip()
-                        if line.isupper() and len(line) > 10 and "GẠT TG24H" not in line and "HEADLINES" not in line:
-                            tieu_de_ai = line
-                            break
+                    # Không fallback bằng text thuần vì quy tắc tiêu đề yêu cầu BOLD từ RTF.
+                    tieu_de_ai = ""
+
+                if success_news:
+                    self.log(f"  ✓ Bóc tách thành công. Tiêu đề: {tieu_de_ai}", to_gui=False)
+                    self.log(f"Bóc tách thành công {os.path.basename(rtf_path)} | Tiêu đề: {tieu_de_ai}")
 
                 # Fallback nội dung: nếu sau 3 lần AI vẫn trả noi_dung rỗng,
                 # tự trích xuất toàn bộ văn bản phía dưới tiêu đề
@@ -1155,9 +1247,10 @@ Văn bản:
                                 title_idx = li
                                 break
                     if title_idx == -1:
-                        # Nếu không tìm được tiêu đề, tìm dòng viết hoa đầu tiên dài > 10
+                        # Nếu không tìm được tiêu đề, tìm dòng IN HOA đầu tiên trong phần đầu kịch bản
+                        fallback_title = tieu_de_ai
                         for li, line in enumerate(all_lines):
-                            if line.isupper() and len(line) > 10 and "GẠT TG24H" not in line and "HEADLINES" not in line:
+                            if fallback_title and line == fallback_title:
                                 title_idx = li
                                 break
                     # Lấy tất cả đoạn phía dưới tiêu đề
@@ -1168,7 +1261,7 @@ Văn bản:
                     # Lọc bỏ dòng trống và dòng quá ngắn (<=2 ký tự)
                     noi_dung_parsed = [l for l in content_lines if len(l) > 2]
                     self.log(f"  ✓ Đã trích xuất được {len(noi_dung_parsed)} đoạn nội dung bằng thuật toán nội bộ.", to_gui=False)
-                    self.log(f"Bóc tách bằng thuật toán nội bộ {os.path.basename(rtf_path)}")
+                    self.log(f"Bóc tách bằng thuật toán nội bộ {os.path.basename(rtf_path)} | Tiêu đề: {tieu_de_ai}")
 
                 # --- Bóc tách nội bộ (không AI) để so sánh cho Map_ChiTiet ---
                 internal_title, internal_translator, internal_content = self._internal_extract_content(rtf_raw, is_live_feed)
@@ -1373,20 +1466,6 @@ Văn bản:
             # Đếm số dòng mỗi tin trong file AI
             ai_line_counts = {}
 
-            def filter_detail_lines(lines, title):
-                clean_title = title.strip().lower() if title else ""
-                filtered = []
-                for line in lines:
-                    line_text = str(line).strip()
-                    if clean_title and line_text.lower() == clean_title:
-                        continue
-                    filtered.append(line)
-
-                if filtered and len(str(filtered[0]).strip()) < 15:
-                    filtered = filtered[1:]
-
-                return filtered
-
             for idx, ct in enumerate(chi_tiet_tin):
                 id_tin = ct["id"]
                 is_live = ct.get("is_live", False)
@@ -1401,7 +1480,7 @@ Văn bản:
                 
                 val_a500_first = f"Biên dịch: {nguoi_bd}" if nguoi_bd else ""
                 
-                filtered_nd = filter_detail_lines(nd_list, title_for_filter)
+                filtered_nd = normalize_detail_lines_for_map(nd_list, title_for_filter)
 
                 if not filtered_nd:
                     ws3.append([id_tin, val_a500_first, ""])
@@ -1435,7 +1514,7 @@ Văn bản:
                 
                 val_a500_first = f"Biên dịch: {nguoi_bd}" if nguoi_bd else ""
                 
-                filtered_int = filter_detail_lines(int_content, int_title)
+                filtered_int = normalize_detail_lines_for_map(int_content, int_title)
 
                 if not filtered_int:
                     ws4.append([id_tin, val_a500_first, ""])
@@ -1474,7 +1553,7 @@ Văn bản:
 
             self.set_progress(100)
             self.log("=== HOÀN TẤT BIÊN MỤC ===")
-            messagebox.showinfo("Thành công", f"Đã sinh các file output thành công tại:\n{output_d}")
+            self.root.after(0, lambda: self.show_completion_dialog(output_d))
 
         except Exception as e:
             err_msg = traceback.format_exc()

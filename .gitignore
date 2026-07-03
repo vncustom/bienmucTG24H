@@ -1,7 +1,7 @@
 # Thư mục input/output chứa dữ liệu nội bộ
 input/
 output/
-
+tempbienmuc/
 # Cấu hình API key cá nhân
 config.json
 
