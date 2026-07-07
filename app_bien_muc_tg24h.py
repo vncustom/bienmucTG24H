@@ -7,6 +7,7 @@ import datetime
 import traceback
 import re
 import time
+import re
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 
@@ -17,12 +18,24 @@ import google.generativeai as genai
 import typing_extensions as typing
 from openai import OpenAI
 
+import striprtf.striprtf as striprtf_module
+striprtf_module.FONTTABLE = re.compile(r"\\f(\d+)[^{}]*?\\fcharset(\d+)[^{}]*?([^;}]+);")
+
 def rtf_to_text(rtf_str):
-    """Wrapper: fix ky tu Vietnamese d/D bi sai do RTF CP1252 encoding.
-    Thay the ky tu eth (U+00F0) thanh d-stroke (U+0111) sau khi convert."""
+    """Wrapper: fix ky tu D/d tieng Viet bi giai ma sai do RTF CP1252 encoding.
+
+    striprtf xu ly per-font charset dung cho tat ca cac ky tu tieng Viet (a-chan,
+    o-moc, u-moc, y-sac...) nho thong tin \fcharset trong font table cua file RTF.
+
+    Truong hop duy nhat striprtf KHONG tu sua duoc la chu D-gach (U+0110/U+0111):
+      - Byte 0xD0 trong CP1252 = Ð (Latin Eth, U+00D0), nhung trong tieng Viet la Đ (D-gach)
+      - Byte 0xF0 trong CP1252 = ð (Latin eth, U+00F0), nhung trong tieng Viet la đ (d-gach)
+    Ly do: font co charset=0 (CP1252) duoc dung cho chu D trong RTF tu Word,
+    vi vay striprtf decode dung theo CP1252 -> Ð/ð, nhung nghia tieng Viet la Đ/đ.
+    """
     result = _rtf_to_text_raw(rtf_str)
-    result = result.replace('\u00f0', 'đ')  # ð → đ
-    result = result.replace('\u00d0', 'Đ')  # Ð → Đ
+    result = result.replace('\u00d0', '\u0110')  # Ð → Đ
+    result = result.replace('\u00f0', '\u0111')  # ð → đ
     return result
 
 def apply_tnr_font(ws):
@@ -391,7 +404,7 @@ class BienMucApp:
         frame_note.pack(fill="x", padx=10, pady=5)
         note_text = (
             "• File LIST (Excel): Bắt đầu bằng 'BTTG24H_' (.xlsx).\n"
-            "   Cột A: Tên file bắt đầu bằng '24H-', '24h-', '24 ', 'GAT24H', 'GAT24h' hoặc 'GAT '; Cột C: bắt đầu bằng số; không dùng Cột D.\n"
+            "   Cột A: Tên file bắt đầu bằng '24H-', '24h-', '24H ', '24h ', '24 ', 'GAT24H', 'GAT24h' hoặc 'GAT '; Cột C: bắt đầu bằng số; không dùng Cột D.\n"
             ".\n"
         )
         ttk.Label(frame_note, text=note_text, justify="left", font=("Arial", 9)).pack(anchor="w")

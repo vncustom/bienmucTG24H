@@ -1,6 +1,6 @@
 # Ứng dụng Tự Động Biên Mục Bản Tin Thế Giới 24H (TG24H)
 
-Ứng dụng Desktop giúp tự động hóa quy trình biên mục bản tin **Thế Giới 24H** của HTV. Hỗ trợ hai nhà cung cấp dịch vụ AI (**Provider 1** và **Provider 2**) để bóc tách nội dung từ các file kịch bản `.rtf` và sinh ra 3 file Excel đầu ra theo chuẩn biên mục của Trung tâm Tư liệu HTV.
+Ứng dụng Desktop giúp tự động hóa quy trình biên mục bản tin **Thế Giới 24H** của HTV. Hỗ trợ ba nhà cung cấp dịch vụ AI (**Provider 1**, **Provider 2** và **Provider 3 (OpenAI-compatible)**) để bóc tách nội dung từ các file kịch bản `.rtf` và sinh ra các file Excel đầu ra theo chuẩn biên mục của Trung tâm Tư liệu HTV.
 
 ---
 
@@ -17,24 +17,24 @@ pip install -r requirements.txt
 
 ## Cách sử dụng
 
-### 1. Chạy ứng dụng
+### 1. Chạy ứng dụng từ mã nguồn
 
 ```bash
 python app_bien_muc_tg24h.py
 ```
 
+Hoặc chạy trực tiếp file thực thi **`BienMucTG24H.exe`** trong thư mục `dist/` sau khi build.
+
 ### 2. Cấu hình API Key & Chọn Provider
 
-Nhấn nút **⚙ Cài đặt API** để mở hộp thoại cài đặt:
+Nhấn nút **⚙ Cài đặt API** để mở hộp thoại cấu hình:
 - **Chọn Provider**:
-  - **Provider 1 (Mặc định)**: Sử dụng nhà cung cấp dịch vụ thứ nhất.
-  - **Provider 2**: Sử dụng nhà cung cấp dịch vụ thứ hai.
-- **Provider 1**:
-  - **API Key Provider 1**: Điền API key tương ứng.
-- **Provider 2**:
-  - **API Key Provider 2**: Điền API key tương ứng (hoặc khai báo biến môi trường).
+  - **Provider 1 (Mặc định)**: Sử dụng nhà cung cấp dịch vụ thứ nhất (Gemini).
+  - **Provider 2**: Sử dụng nhà cung cấp dịch vụ thứ hai (Mistral).
+  - **Provider 3 (OpenAI-compatible)**: Sử dụng dịch vụ tương thích OpenAI (như Groq, Llama, Qwen...).
+- **Cấu hình API Key & Base URL**: Nhập API Key tương ứng cho Provider đã chọn (và Base URL cho Provider 3 nếu cần).
 
-> Cấu hình được lưu vào file `config.json` cục bộ (được tự động bỏ qua khi commit).
+> Cấu hình được lưu tự động vào file `config.json` cục bộ.
 
 ### 3. Chọn thư mục và chạy
 
@@ -42,7 +42,20 @@ Nhấn nút **⚙ Cài đặt API** để mở hộp thoại cài đặt:
 2. (Tùy chọn) Nhấn **Chọn...** bên cạnh "Thư mục Output" → nếu để trống, app tự tạo folder `output/` bên trong Input.
 3. Nhập **Mã bản tin ($a090)** nếu cần thiết lập mã khác (mặc định hiển thị mờ gợi ý là `K303419`).
 4. Nhấn **▶ BẮT ĐẦU BIÊN MỤC** và theo dõi tiến trình trong khung log.
-5. Khi hoàn tất, popup **Thành công** hiển thị đường dẫn output. Nhấn **Open output folder** để mở nhanh thư mục chứa file kết quả, hoặc nhấn **OK** để đóng popup.
+5. Khi hoàn tất, popup **Thành công** hiển thị đường dẫn output. Nhấn **Open output folder** để mở nhanh thư mục kết quả.
+
+---
+
+## Đóng gói ứng dụng thành file thực thi (.exe)
+
+Ứng dụng có thể được đóng gói thành một file `.exe` duy nhất bằng **PyInstaller** sử dụng môi trường ảo `.venv_build` đi kèm:
+
+```powershell
+# Chạy lệnh build sử dụng file Spec có sẵn
+.\.venv_build\Scripts\pyinstaller.exe BienMucTG24H.spec --noconfirm
+```
+
+Sau khi hoàn thành, file thực thi **`BienMucTG24H.exe`** sẽ nằm trong thư mục **`dist/`**.
 
 ---
 
@@ -52,33 +65,24 @@ Nhấn nút **⚙ Cài đặt API** để mở hộp thoại cài đặt:
 
 ```
 input/
-├── BTTG24H_YYYYMMDD.xlsx        ← File danh sách bản tin (LIST) - BẮT BUỘC
-├── NHUNG NGUOI THUC HIEN*.rtf   ← File ê-kíp sản xuất (Bắt buộc hoặc dùng file tiền tố)
-├── BGĐ MÃ CHÍ THÔNG.rtf         ← File ê-kíp bổ sung nếu file NHUNG NGUOI THUC HIEN*.rtf bị thiếu
-├── BT KIM NGÂN, THẢO TRANG.rtf  ← File biên tập bổ sung (nếu có nhiều tên, cách bởi dấu phẩy)
-├── 24H-TenTin.rtf               ← Kịch bản bản tin chính
-├── GAT24H-TenTin.rtf            ← Kịch bản tin gạt
-├── GAT TenTin.rtf               ← Kịch bản tin gạt
-└── ...
+55: ├── BTTG24H_YYYYMMDD.xlsx        ← File danh sách bản tin (LIST) - BẮT BUỘC
+56: ├── NHUNG NGUOI THUC HIEN*.rtf   ← File ê-kíp sản xuất (Bắt buộc hoặc dùng file tiền tố)
+57: ├── BGĐ MÃ CHÍ THÔNG.rtf         ← File ê-kíp bổ sung nếu file NHUNG NGUOI THUC HIEN*.rtf bị thiếu
+58: ├── BT KIM NGÂN, THẢO TRANG.rtf  ← File biên tập bổ sung (nếu có nhiều tên, cách bởi dấu phẩy)
+59: ├── 24H-TenTin.rtf               ← Kịch bản bản tin chính
+60: ├── GAT24H-TenTin.rtf            ← Kịch bản tin gạt
+61: ├── GAT TenTin.rtf               ← Kịch bản tin gạt
+62: └── ...
 ```
 
 - **File LIST (Excel)**: Tên file bắt đầu bằng `BTTG24H_YYYYMMDD.xlsx`. 
   - Dữ liệu được đọc từ **Active Sheet** (Sheet đang hoạt động).
-  - Cột A phải chứa tên file bắt đầu bằng `24H-`, `24h-`, `24 `, `GAT24H`, `GAT24h` hoặc `GAT `.
-  - Cột C là ID bản tin và phải **bắt đầu bằng số**. Ví dụ `260611056` và `260611056a` hợp lệ; dòng trống hoặc `qc123` không hợp lệ.
-  - Cột D không dùng để bắt tin.
+  - Cột A chứa tên file bắt đầu bằng `24H-`, `24h-`, `24H `, `24h `, `24 `, `GAT24H`, `GAT24h` hoặc `GAT `.
+  - Cột C là ID bản tin và phải **bắt đầu bằng số**.
   - Cột F chứa thời lượng phát sóng.
-- **File Ê-kíp**: File `.rtf` có tên chứa `NHUNG NGUOI THUC HIEN`, ví dụ `NHUNG NGUOI THUC HIEN.rtf` hoặc `NHUNG NGUOI THUC HIEN abc.rtf`. Nếu chức danh nào thiếu tên, app sẽ tự tìm các file RTF có tiền tố tương ứng (`BGĐ `, `BT `, `BD `, `MC `, `ĐD `, `KT `) trong folder để điền vào. Nếu một chức danh có từ 2 tên trở lên, các tên sẽ tự động được viết hoa và nối bằng dấu gạch ngang (` - `).
-- **Quy tắc nhận diện Tiêu đề**: Tiêu đề chính được xác định theo thứ tự ưu tiên:
-  - Ưu tiên dòng đầu tiên trong phần đầu kịch bản thỏa mãn đồng thời:
-    1. Được viết IN HOA toàn bộ (`isupper()`).
-    2. Được in đậm (BOLD).
-    3. Dài hơn 16 ký tự.
-    4. Không bắt đầu bằng `AFP`, `AP` hoặc `REUTERS`.
-    5. Không phải nhãn phân loại như `GẠT TG24H`, `GAT24H` hoặc `HEADLINES`.
-  - Nếu không có dòng IN HOA BOLD hợp lệ, app lấy dòng đầu tiên trong phần đầu kịch bản được viết IN HOA toàn bộ, dài hơn 16 ký tự, không bắt đầu bằng `AFP`, `AP`, `REUTERS`, và không phải nhãn gạt/headlines.
-  - Quy tắc này được áp dụng cho cả kết quả AI, fallback và thuật toán nội bộ.
-- **File Kịch bản tin (.rtf)**: Tên file cần chứa hoặc khớp với tên file định nghĩa trong cột A của file Excel LIST.
+- **File Ê-kíp**: File `.rtf` có tên chứa `NHUNG NGUOI THUC HIEN`. Nếu thiếu chức danh nào, app tự tìm các file phụ có tiền tố (`BGĐ `, `BT `, `BD `, `MC `, `ĐD `, `KT `) để điền bổ sung.
+- **Xử lý mã hóa Tiếng Việt (RTF)**: Khắc phục triệt để lỗi hiển thị sai ký tự tiếng Việt có dấu (như lỗi chữ `Đ/đ` bị chuyển thành `Ð/ð` do xung đột bảng mã font CP1258 và CP1252 trong RTF) nhờ bộ lọc chuyển đổi ký tự tự động trong wrapper `rtf_to_text`.
+- **Quy tắc nhận diện Tiêu đề**: Tiêu đề chính được xác định ưu tiên theo dòng viết IN HOA toàn bộ, được in đậm (BOLD), dài hơn 16 ký tự ở phần đầu kịch bản.
 
 ---
 
@@ -110,29 +114,30 @@ Thư mục này nằm cùng cấp với thư mục `input` và được tự đ�
 ### 1. Thuật toán bóc tách Ê-kíp nội bộ
 - **Nguồn**: File `NHUNG NGUOI THUC HIEN.rtf`
 - **Cơ chế**: Quét văn bản đã chuyển đổi sang plain text bằng các mẫu biểu thức chính quy (Regex) tương ứng với từng chức danh.
-- **Fallback**: Nếu thiếu chức danh nào, tự động dò tìm các file RTF phụ có tiền tố tương ứng (`BGĐ `, `BT `, `BD `, `MC `, `ĐD `, `KT `) để lấy tên người thực hiện từ tên file.
+- **Fallback**: Nếu thiếu chức danh nào, tự động dò tìm các file RTF phụ có tiền tố tương ứng để lấy tên người thực hiện từ tên file.
 
 ### 2. Thuật toán bóc tách Tiêu đề, Biên dịch và Nội dung tin
-- **Tiêu đề**: Ưu tiên dòng đầu tiên trong phần đầu kịch bản được viết IN HOA toàn bộ, in đậm (BOLD), dài hơn 16 ký tự, không bắt đầu bằng `AFP`, `AP`, `REUTERS`, và không phải nhãn gạt/headlines. Nếu không có dòng BOLD hợp lệ, fallback sang dòng IN HOA đầu tiên dài hơn 16 ký tự trong phần đầu kịch bản với cùng điều kiện loại trừ.
+- **Tiêu đề**: Ưu tiên dòng đầu tiên trong phần đầu kịch bản được viết IN HOA toàn bộ, in đậm (BOLD), dài hơn 16 ký tự, không bắt đầu bằng `AFP`, `AP`, `REUTERS`, và không phải nhãn gạt/headlines.
 - **Biên dịch**: Dòng chữ không chứa chữ số hoặc các từ khóa của metadata nằm ngay trước dòng tiêu đề trong phạm vi 7 dòng.
-- **Nội dung tin**: Lọc bỏ các dòng nhiễu (dòng separator `==`, tên tiếng Anh, link hình/video, ngày tháng).
+- **Nội dung tin**: Lọc bỏ các dòng nhiễu.
   - Với tin thường: Lấy từ dưới tiêu đề đến chữ **màu đen cuối cùng**.
-  - Với tin LIVE (tên file chứa chữ "LIVE"): Lấy từ dưới tiêu đề đến chữ **màu đỏ cuối cùng**, đồng thời tự động loại bỏ các dòng chữ màu xanh lá cây không in đậm.
+  - Với tin LIVE: Lấy từ dưới tiêu đề đến chữ **màu đỏ cuối cùng**, đồng thời tự động loại bỏ các dòng chữ màu xanh lá cây không in đậm.
   - Khi xuất `Map_ChiTiet`, nếu gặp cụm 3 dòng IN HOA liên tục theo mẫu `PB[số]`, `IN HOA 1`, `IN HOA 2`, app bỏ dòng `PB[số]` và gộp 2 dòng sau thành `IN HOA 1 - IN HOA 2`.
 
 ### 3. Cơ chế đối chiếu & Hiển thị tiến trình
 - **Đối chiếu chéo**: Sau khi sinh các file, app so sánh số dòng của từng bản tin giữa `Map_ChiTiet` (AI) và `Map_ChiTiet_ThuatToan`.
-- **Thông báo**: Nếu phát hiện sự chênh lệch, app ghi nhận nhẹ nhàng trong khung log tiến trình:
+- **Thông báo**: Nếu phát hiện sự chênh lệch, app ghi nhận trong khung log tiến trình:
   `Phát hiện số dòng không trùng khớp giữa AI và ThuatToan:`
   `  ▸ Tin {ID}: AI={ai} dòng, ThuậtToán={tt} dòng`
   `Đề nghị kiểm tay những tin trên.`
-  *(Không hiển thị popup cảnh báo làm phiền người dùng)*.
-- **Thanh tiến độ**: Được thiết kế chạy realtime thread-safe mượt mà từ 0% đến 100% giúp giao diện không bị giật hoặc treo.
-- **Popup hoàn tất**: Sau khi tạo file thành công, popup hiển thị đường dẫn output và có nút **Open output folder** để mở nhanh thư mục kết quả.
+- **Thanh tiến độ**: Chạy realtime thread-safe mượt mà từ 0% đến 100%.
 
 ---
+
 
 ## Quản lý Log & Gỡ lỗi
 
 - **Log hiển thị trực tiếp**: Tiến trình chạy được hiển thị realtime trên giao diện app.
 - **Tự động dọn dẹp log**: Toàn bộ nhật ký được ghi vào file `app_bien_muc_tg24h.log`. Để tránh phình to file log, app sẽ **tự động xóa log cũ và chỉ lưu lại dữ liệu của 3 ngày gần nhất** mỗi khi khởi động.
+�ng nhiễu (dòng separator `==`, tên tiếng Anh, link hình/video, ngày tháng).
+  - Với tin thường: Lấy từ dưới tiêu đề đến chữ **màu đen cuối cùng**.
