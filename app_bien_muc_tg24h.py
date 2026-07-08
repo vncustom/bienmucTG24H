@@ -136,23 +136,51 @@ def normalize_detail_lines_for_map(lines, title: str):
     filtered = []
     for line in lines:
         line_text = str(line).strip()
-        if clean_title and line_text.lower() == clean_title:
-            continue
         filtered.append(line_text)
 
     if filtered and len(filtered[0]) < 15 and not re.fullmatch(r"PB\d+", filtered[0], flags=re.IGNORECASE):
         filtered = filtered[1:]
 
+    def is_title_line(value: str) -> bool:
+        return bool(clean_title) and value.strip().lower() == clean_title
+
+    def split_title_prefixed_merge(value: str) -> str | None:
+        if not clean_title:
+            return None
+        prefix = f"{title.strip()} - "
+        if value.lower().startswith(prefix.lower()):
+            remainder = value[len(prefix):].strip()
+            return remainder or None
+        return None
+
     normalized = []
     i = 0
     while i < len(filtered):
         current = filtered[i]
+        title_merge_remainder = split_title_prefixed_merge(current)
+        if title_merge_remainder is not None:
+            next_line = filtered[i + 1].strip() if i + 1 < len(filtered) else ""
+            if next_line.lower() != title_merge_remainder.lower():
+                normalized.append(title_merge_remainder)
+            i += 1
+            continue
+
+        if is_title_line(current):
+            i += 1
+            continue
+
         if (
             re.fullmatch(r"PB\d+", current, flags=re.IGNORECASE)
             and i + 2 < len(filtered)
             and is_uppercase_text(filtered[i + 1])
             and is_uppercase_text(filtered[i + 2])
         ):
+            if is_title_line(filtered[i + 1]) or is_title_line(filtered[i + 2]):
+                for candidate in (filtered[i + 1], filtered[i + 2]):
+                    if not is_title_line(candidate):
+                        normalized.append(candidate)
+                i += 3
+                continue
             normalized.append(f"{filtered[i + 1]} - {filtered[i + 2]}")
             i += 3
             continue
@@ -701,16 +729,17 @@ class BienMucApp:
                 if pard_idx != -1:
                     p_clean = p_clean[pard_idx:]
             
-            has_green = green_cf in p_clean
-            has_black = (black_cf in p_clean) if black_cf else False
-            has_red = (red_cf in p_clean) if red_cf else False
+            leading_text = p_clean.lstrip()
+            has_green = bool(green_cf) and leading_text.startswith(green_cf)
+            has_black = bool(black_cf) and leading_text.startswith(black_cf)
+            has_red = bool(red_cf) and leading_text.startswith(red_cf)
             # Nếu đoạn không có tag màu nào → thừa kế màu đen từ đoạn trước
             if not has_green and not has_black and not has_red:
                 has_black = True
             is_bold = r'\b' in p_clean and (r'\b0' not in p_clean or p_clean.index(r'\b') < p_clean.index(r'\b0'))
             
             txt = para_to_text(p_clean)
-            if txt:
+            if txt and txt.strip("\x00").strip():
                 parsed_paras.append({
                     'text': txt,
                     'has_green': has_green,
@@ -789,15 +818,106 @@ class BienMucApp:
         
         return title, translator, content_lines
 
+    def _build_news_text_for_ai(self, rtf_raw: str, title: str, is_live_feed: bool) -> str:
+        green_cf, black_cf, red_cf = get_color_tags(rtf_raw)
+
+        header_match = re.search(r'\\viewkind\d\\uc\d\s*', rtf_raw)
+        rtf_header = rtf_raw[:header_match.end()] if header_match else r"{\rtf1\ansi "
+
+        def para_to_text(para_raw):
+            try:
+                wrapped = rtf_header + para_raw + r"}"
+                txt = rtf_to_text(wrapped).strip()
+                return re.sub(r'\s+', ' ', txt)
+            except Exception:
+                return ""
+
+        paragraphs = re.split(r'\\par(?![a-zA-Z])', rtf_raw)
+        parsed_paras = []
+        for idx, p in enumerate(paragraphs):
+            p_clean = p.strip()
+            if not p_clean:
+                continue
+            if idx == 0:
+                pard_idx = p_clean.find(r'\pard')
+                if pard_idx != -1:
+                    p_clean = p_clean[pard_idx:]
+
+            leading_text = p_clean.lstrip()
+            has_green = bool(green_cf) and leading_text.startswith(green_cf)
+            has_black = bool(black_cf) and leading_text.startswith(black_cf)
+            has_red = bool(red_cf) and leading_text.startswith(red_cf)
+            if not has_green and not has_black and not has_red:
+                has_black = True
+            is_bold = r'\b' in p_clean and (r'\b0' not in p_clean or p_clean.index(r'\b') < p_clean.index(r'\b0'))
+
+            txt = para_to_text(p_clean)
+            if txt and txt.strip("\x00").strip():
+                parsed_paras.append({
+                    "text": txt,
+                    "has_green": has_green,
+                    "has_black": has_black,
+                    "has_red": has_red,
+                    "is_bold": is_bold,
+                })
+
+        if not parsed_paras:
+            return rtf_to_text(rtf_raw)
+
+        last_content_idx = -1
+        for idx, p in enumerate(parsed_paras):
+            if re.search(r'={2,}', p["text"]):
+                break
+            if is_live_feed:
+                if p["has_red"] or p["has_black"]:
+                    last_content_idx = idx
+            else:
+                if p["has_black"]:
+                    last_content_idx = idx
+
+        if last_content_idx == -1:
+            return "\n".join(p["text"] for p in parsed_paras)
+
+        filtered_paragraphs = []
+        found_title = False
+        seen_content_after_title = False
+        clean_title = title.strip()
+        for p in parsed_paras[:last_content_idx + 1]:
+            txt = p["text"]
+            if clean_title and txt == clean_title:
+                found_title = True
+            if found_title and not p["has_green"] and len(txt) > 2:
+                seen_content_after_title = True
+
+            if is_live_feed and p["has_green"] and not p["is_bold"]:
+                if found_title and not seen_content_after_title and txt.isupper() and len(txt) > 3:
+                    pass
+                else:
+                    continue
+
+            filtered_paragraphs.append(txt)
+
+        return "\n".join(filtered_paragraphs)
+
     # ------------------------------------------------------------------
     # Helper: Gọi AI theo provider đang chọn
     # Trả về dict JSON đã parse, hoặc raise Exception nếu thất bại
     # ------------------------------------------------------------------
-    def _call_ai(self, prompt: str, response_schema, models_to_try: list) -> dict:
+    def _call_ai(self, prompt: str, response_schema, models_to_try: list, required_non_empty_field: str | None = None) -> dict:
         """Gọi provider AI (Gemini, Mistral hoặc OpenAI-compatible) lần lượt qua danh sách models.
         Trả về dict đã parse JSON. Raise Exception nếu tất cả model thất bại."""
         provider = self.provider.get()
         last_exc = None
+
+        def has_required_content(result: dict) -> bool:
+            if not required_non_empty_field:
+                return True
+            value = result.get(required_non_empty_field)
+            if isinstance(value, list):
+                return len(value) > 0
+            if isinstance(value, str):
+                return bool(value.strip())
+            return bool(value)
 
         for m_idx, m_name in enumerate(models_to_try):
             self.log(f"  Thử model: {self._get_model_display_name(m_name)} ({self._get_provider_display_name(provider)})...")
@@ -810,7 +930,7 @@ class BienMucApp:
                             response_mime_type="application/json",
                             response_schema=response_schema
                         ),
-                        request_options={"timeout": 240}
+                        request_options={"timeout": 120}
                     )
                     result = json.loads(res.text)
                 elif provider == "mistral":  # mistral
@@ -827,7 +947,7 @@ class BienMucApp:
                         model=m_name,
                         messages=[{"role": "user", "content": refined_prompt}],
                         response_format=response_format,
-                        timeout=240
+                        timeout=120
                     )
                     result = json.loads(chat_res.choices[0].message.content)
                 else:  # openai_compat
@@ -844,9 +964,12 @@ class BienMucApp:
                         model=m_name,
                         messages=[{"role": "user", "content": refined_prompt}],
                         response_format=response_format,
-                        timeout=240
+                        timeout=120
                     )
                     result = json.loads(chat_res.choices[0].message.content)
+
+                if not has_required_content(result):
+                    raise ValueError(f"Model trả về {required_non_empty_field} rỗng")
 
                 return result
 
@@ -1194,7 +1317,11 @@ Văn bản:
                         self.log(f"  ⚠ Lỗi khi lọc tin LIVE: {e}. Fallback sang text thô.")
                         news_text = rtf_to_text(rtf_raw)
                 else:
-                    news_text = rtf_to_text(rtf_raw)
+                    try:
+                        news_text = self._build_news_text_for_ai(rtf_raw, tieu_de_tu_dinh_dang, is_live_feed)
+                    except Exception as e:
+                        self.log(f"  Lỗi khi lọc văn bản gửi AI: {e}. Fallback sang text thô.")
+                        news_text = rtf_to_text(rtf_raw)
 
                 # Cắt bỏ nội dung từ dòng có 3 ký tự '=' liên tục trở lên đến cuối
                 filtered_lines = []
@@ -1238,7 +1365,12 @@ Văn bản:
                 success_news = False
                 # Thử gọi AI – nếu thành công nhưng noi_dung rỗng thì cũng xem là thất bại
                 try:
-                    news_parsed = self._call_ai(prompt_news, RtfParseResult, models_to_try)
+                    news_parsed = self._call_ai(
+                        prompt_news,
+                        RtfParseResult,
+                        models_to_try,
+                        required_non_empty_field="noi_dung",
+                    )
                     if news_parsed.get("noi_dung") and len(news_parsed["noi_dung"]) > 0:
                         success_news = True
                     else:

@@ -95,7 +95,7 @@ Các file đầu ra luôn được định dạng với **font Times New Roman, 
 |------|-------|
 | `Import_SoLuoc_TG24H_YYYYMMDD.xlsx` | Danh sách sơ lược các bản tin, dùng để import vào hệ thống thư viện |
 | `Map_BanTinTG_24G_YYYYMMDD.xlsx` | Bảng mapping thông tin ê-kíp và mục lục phát sóng (dùng mã bản tin $a090) |
-| `Map_ChiTiet_24G_YYYYMMDD.xlsx` | Nội dung chi tiết từng bản tin (người biên dịch + transcript). Các cụm `PB[số]` + 2 dòng IN HOA liên tiếp được gộp thành một dòng `DÒNG 1 - DÒNG 2`. |
+| `Map_ChiTiet_24G_YYYYMMDD.xlsx` | Nội dung chi tiết từng bản tin (người biên dịch + transcript). Các cụm `PB[số]` + 2 dòng IN HOA liên tiếp được gộp thành một dòng `DÒNG 1 - DÒNG 2`, trừ trường hợp một trong hai dòng là tiêu đề tin. |
 
 ### 2. Thư mục `tempbienmuc` (Sử dụng Thuật toán nội bộ - Không dùng AI)
 Thư mục này nằm cùng cấp với thư mục `input` và được tự động **dọn dẹp sạch sẽ (xóa toàn bộ file cũ)** mỗi khi bắt đầu tiến trình biên mục. Các file output dự phòng tại đây bao gồm:
@@ -103,7 +103,7 @@ Thư mục này nằm cùng cấp với thư mục `input` và được tự đ�
 |------|-------|
 | `Import_SoLuoc_TG24H_thuattoan_YYYYMMDD.xlsx` | Danh sách sơ lược các bản tin, tạo hoàn toàn bằng thuật toán bóc tách tiêu đề nội bộ |
 | `Map_BanTinTG_24G_thuattoan_YYYYMMDD.xlsx` | Bảng mapping ê-kíp (bóc tách bằng regex) và mục lục tạo hoàn toàn bằng thuật toán |
-| `Map_ChiTiet_ThuatToan_YYYYMMDD.xlsx` | Nội dung chi tiết từng bản tin bóc tách bằng thuật toán (người biên dịch nội bộ + transcript). Áp dụng cùng quy tắc gộp cụm `PB[số]` như file Map_ChiTiet AI. |
+| `Map_ChiTiet_ThuatToan_YYYYMMDD.xlsx` | Nội dung chi tiết từng bản tin bóc tách bằng thuật toán (người biên dịch nội bộ + transcript). Áp dụng cùng quy tắc gộp cụm `PB[số]` và loại tiêu đề như file Map_ChiTiet AI. |
 
 ---
 
@@ -116,15 +116,25 @@ Thư mục này nằm cùng cấp với thư mục `input` và được tự đ�
 - **Cơ chế**: Quét văn bản đã chuyển đổi sang plain text bằng các mẫu biểu thức chính quy (Regex) tương ứng với từng chức danh.
 - **Fallback**: Nếu thiếu chức danh nào, tự động dò tìm các file RTF phụ có tiền tố tương ứng để lấy tên người thực hiện từ tên file.
 
-### 2. Thuật toán bóc tách Tiêu đề, Biên dịch và Nội dung tin
+### 2. Bóc tách bằng AI và cơ chế fallback
+- **Văn bản gửi AI**: Trước khi gọi AI, app lọc nội dung từ RTF theo định dạng màu để tránh gửi nhầm phần ghi chú/phần dư ở cuối kịch bản.
+  - Với tin thường: Chỉ gửi phần văn bản đến chữ **màu đen cuối cùng**.
+  - Với tin LIVE: Gửi đến chữ **màu đỏ/đen cuối cùng** và loại các dòng chữ xanh lá không in đậm không thuộc nội dung đọc.
+  - Các đoạn xanh lá ở cuối file RTF không nằm trong phần nội dung sẽ không được đưa vào prompt AI.
+- **Fallback model**: App lần lượt thử model chính và các model fallback đã cấu hình. Nếu model lỗi hoặc trả `noi_dung` rỗng, kết quả đó được xem là thất bại và app chuyển sang model kế tiếp.
+- **Timeout**: Mỗi lần gọi AI có timeout **120 giây**. Giữa các lần thử model fallback, app chờ **1 giây**.
+- **Fallback không dùng AI**: Nếu tất cả model đều thất bại hoặc không có nội dung hợp lệ, app chuyển sang thuật toán nội bộ để bóc tách nội dung.
+
+### 3. Thuật toán bóc tách Tiêu đề, Biên dịch và Nội dung tin
 - **Tiêu đề**: Ưu tiên dòng đầu tiên trong phần đầu kịch bản được viết IN HOA toàn bộ, in đậm (BOLD), dài hơn 16 ký tự, không bắt đầu bằng `AFP`, `AP`, `REUTERS`, và không phải nhãn gạt/headlines.
 - **Biên dịch**: Dòng chữ không chứa chữ số hoặc các từ khóa của metadata nằm ngay trước dòng tiêu đề trong phạm vi 7 dòng.
 - **Nội dung tin**: Lọc bỏ các dòng nhiễu.
   - Với tin thường: Lấy từ dưới tiêu đề đến chữ **màu đen cuối cùng**.
   - Với tin LIVE: Lấy từ dưới tiêu đề đến chữ **màu đỏ cuối cùng**, đồng thời tự động loại bỏ các dòng chữ màu xanh lá cây không in đậm.
   - Khi xuất `Map_ChiTiet`, nếu gặp cụm 3 dòng IN HOA liên tục theo mẫu `PB[số]`, `IN HOA 1`, `IN HOA 2`, app bỏ dòng `PB[số]` và gộp 2 dòng sau thành `IN HOA 1 - IN HOA 2`.
+  - Nếu cụm gộp có chứa tiêu đề tin, app bỏ dòng `PB[số]` và tiêu đề, không gộp tiêu đề vào nội dung. Nếu AI trả một dòng dạng `TIÊU ĐỀ - DÒNG SAU`, app bỏ phần tiêu đề trước khi xuất `Map_ChiTiet`.
 
-### 3. Cơ chế đối chiếu & Hiển thị tiến trình
+### 4. Cơ chế đối chiếu & Hiển thị tiến trình
 - **Đối chiếu chéo**: Sau khi sinh các file, app so sánh số dòng của từng bản tin giữa `Map_ChiTiet` (AI) và `Map_ChiTiet_ThuatToan`.
 - **Thông báo**: Nếu phát hiện sự chênh lệch, app ghi nhận trong khung log tiến trình:
   `Phát hiện số dòng không trùng khớp giữa AI và ThuatToan:`
@@ -139,5 +149,3 @@ Thư mục này nằm cùng cấp với thư mục `input` và được tự đ�
 
 - **Log hiển thị trực tiếp**: Tiến trình chạy được hiển thị realtime trên giao diện app.
 - **Tự động dọn dẹp log**: Toàn bộ nhật ký được ghi vào file `app_bien_muc_tg24h.log`. Để tránh phình to file log, app sẽ **tự động xóa log cũ và chỉ lưu lại dữ liệu của 3 ngày gần nhất** mỗi khi khởi động.
-�ng nhiễu (dòng separator `==`, tên tiếng Anh, link hình/video, ngày tháng).
-  - Với tin thường: Lấy từ dưới tiêu đề đến chữ **màu đen cuối cùng**.
