@@ -2,6 +2,7 @@
 input/
 output/
 tempbienmuc/
+ouput/
 # Cấu hình API key cá nhân
 config.json
 
